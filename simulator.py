@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from ipcqueue import posixmq
+from ipcqueue import sysvmq 
 from optparse import OptionParser
 import threading
 import sys
@@ -7,6 +7,7 @@ import time
 import random
 import os
 
+working_dir= os.getcwd()
 dic={}
 parser = OptionParser()
 parser.add_option("-P", "--procedure", dest="process", help="starting simulator")
@@ -21,6 +22,8 @@ parser.add_option("-A", "--apn", dest="apn", help="Operator APN")
 parser.add_option("-T", "--tac1", dest="tac1", help="Operator TAC1")
 parser.add_option("-V", "--tac2", dest="tac2", help="Operator TAC2")
 parser.add_option("-E", "--enbid", dest="enb_id", help="Enodeb id")
+parser.add_option("-X", "--enbname", dest="enb_name", help="Enodeb Name")
+parser.add_option("-B", "--attachtype", dest="attach_type", help="Attach Type")
 (options, args) = parser.parse_args()
 if len(sys.argv) <= 1:
        print("No arguments passed - You need to specify parameters to use.")
@@ -50,6 +53,10 @@ if options.tac2 is not None:
     dic['tac2'] = str(options.tac2)
 if options.enb_id is not None:
     dic['enb_id'] = str(options.enb_id)
+if options.enb_name is not None:
+    dic['enb_name'] = str(options.enb_name)
+if options.attach_type is not None:
+    dic['attach_type'] = str(options.attach_type)
 
 # Function to validate linux command execution status
 def linux_command(command):
@@ -60,13 +67,13 @@ def linux_command(command):
 
 # Func to send procedures
 def msg_queue(user_dic):
-    q=posixmq.Queue("/foo")
+    q=sysvmq.Queue(1)
     q.put(user_dic)
 
 # Func to start simulator
 def start_sim(enb,mme):
     service_template=["[Unit]","Description=Simulator Service",
-                      "[Service]","Restart=always","User=root","WorkingDirectory=/root/eNB/","ExecStart=/usr/bin/python3 /root/eNB/eNB_LOCAL.py ",
+                      "[Service]","Restart=always","RestartSec=10","User=root",f"WorkingDirectory={working_dir}/",f"ExecStart=/usr/bin/python3 {working_dir}/eNB_LOCAL.py ",
                       "[Install]","WantedBy=multi-user.target"]
     with open("/lib/systemd/system/tool.service","w") as toolsvc:
         for content in service_template:

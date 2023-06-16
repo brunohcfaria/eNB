@@ -1,7 +1,9 @@
+from logging.handlers import SysLogHandler
+from ipaddress import ip_address, IPv4Address,IPv6Address
 from scapy.all import *
 import re
 import netifaces
-from ipcqueue import posixmq
+from ipcqueue import sysvmq 
 import random
 import socket
 import struct
@@ -21,18 +23,32 @@ import os
 import subprocess
 from threading import Thread
 import datetime
-import logging
+import logging as log
 from kamene.all import IP
 from kamene.all import UDP 
 from kamene.all import Raw
 from kamene.all import send 
 import multiprocessing
 import eNAS, eMENU
-os.system("mkdir -p /var/log/sim/")
-logging.basicConfig(filename="/var/log/sim/tool.log",filemode='w',format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',datefmt='%Y-%m-%d %H:%M:%S',level=logging.DEBUG)
-logger = logging.getLogger('edge_log')
 
+#Logging Handling to syslog
+logging = log.getLogger(__name__)
+logging.setLevel(log.DEBUG)
+handler = SysLogHandler(
+        facility=SysLogHandler.LOG_DAEMON,
+        address='/dev/log'
+        )
+formatter = log.Formatter(
+        fmt="%(asctime)s  simulator - %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+        )
+handler.setFormatter(formatter)
+logging.addHandler(handler)
 
+# Variables
+down_gtp={}
+user_dict = {}
+gtp_dict = {}
 #tries to import all options for retrieving IMSI, and RES, CK and IK from USIM.
 #if all fails, return_imsi and return_res_ck_ik will return None, so local values will be used.
 try:
@@ -60,19 +76,21 @@ def flag_set(n):
       return False
     else:
       return False
-enb_s1ap_id= 1000
-PLMN = '111111'
+
+ue_eth=[(f"veth{n}",f"neth{n}") for n in range(1000)]
+upteid=1
+enb_s1ap_id = 1
+PLMN = '315010'
 IMSI = PLMN + '1234567890'
 IMEISV = '1234567890123456'
 IMEI = '123456789012347'
 APN = 'internet'
-
 #Examples. Customize at your needs
 NON_IP_PACKET_1 = '0102030405060708090a'
 NON_IP_PACKET_2 = '0102030405060708090a0102030405060708090a'
 NON_IP_PACKET_3 = '0102030405060708090a0102030405060708090a0102030405060708090a'
 NON_IP_PACKET_4 = '0102030405060708090a0102030405060708090a0102030405060708090a0102030405060708090a'
-
+ue_cap=unhexlify("044a00010893cddb80519bcc195a70001040c2060e2c60d204cd9d4a993a852fdf99b3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3"+"ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fb3ffffff89fdd0ffc86802002321e507f0213300000000bd900000080c18ef800000017fe006004400c"+"00c00c00a004020060060060060060050421801821041006080304218210c1082084104218210c1086084304202080304018200c1006084304218200c1006080304018210c1086084304018200c1006080304018200c10860841042020841042041006080304218210c10"+"86006084108010c2004304018200c2084308210c2084308210c20841082104208410821042084108210c2084308210c108608430821042084108210c2084308200c2080308200c2080308200c1082084104218210c10860843082104208010820042080108200c2080304"+"208400061000142000308000a080308010c100610021840086100212d1f511b20780007f03bc001040d80004103640010006d08002e0400300001040c1000410308001040c3000410310001000c600041031c001000cb000400330001000cd000400340001000d3000400"+"36c001000dd000400394001040e600041039c001040e80004103a4001040ff0004103fc001001ef000416f0820778002483de00082da1001ff000406f0820bf840ef0004107fc00105bc2082fe107bc001041ef00041440800b7841c40004007bc001050c2082de1070c0"+"01041ef00041410820b7841c10004107fc00105b42002da1032c0010016d08188000800b6840c30004105b420608002083fe000808210417f08182000820ff80020a084105fc20e0800208396000808210414b08182000820e20002020841051020608002083860008282"+"10414308382000820e080020a084107fc001010c2082fe1030c001041cb00040430820a5840c3000410710001010c2082881030c001041c300041430820ff80020a204005fc20e2000200396000808810014b08188000800ff80020a584005fc20e5800200196000880ff"+"800203f84105fc207f8002083fe00082fe1041ef000496f0820b7849ef0004103bc001341ef000496d08017f80020378416f08213f840ef000416f0820ff800203784905fc20778002485fe00082fe105bc2084fe105fc20f78002085fe00082de105bc2084fe107bc001"+"05bc2085fe00082de105b42004fe107bc00105b42005fe00082de105102004fe107bc00105102004fe105bc20e20002005fe00082de105042084fe107bc00105042084fe105bc20e08002083fe00082de12417f083de0009217780020b7841440801378416f0838800080"+"17780020b7841410821378416f083820008217780020b6840410821378416d081820008217780020a204041082137841c400040410821378414408182000820f780024a204005bc24e20002003de000928610416f09386000820f780024a084105bc24e08002085fe0008"+"2fe105b42005fe00082da101b42005fe00082da101102004fe105b420620002005fe00082da101042084fe105b420608002083fe00082da12026d080da1030c0010426d080da103040010416d0919600080136840c400040410821368404408182000820b6848c4000400"+"5b424618002084da1030400105042082da12304001042ff000407f0828210427f081fe000828210427f080fe1070400107fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ff"+"ffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffff"+"c4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd"+"9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9fff"+"fffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc"+"4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9"+"ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffffffc4fd9ffff"+"ffc4fd9ffffffc4fbff2000047fc00000000010e43c3c5e2f178bc3c3c5e2e25fe5fe1e1e1c25fe5fc00000000000010e07fe0000000000000000000000000000000000000000000000000202020c08000200a0c028300a02028080802008020080200a02020080200802"+"8300a0c028080a020200802008020080200a0c02830080200802008028080a0202008028080a020002832020a0c808280a020802000080483004830028300a0c0480a020480a0204808048080480804808048080480804808048080480804808028080a02040040040040"+"0400400400400400200802008020080480a020480804808048080480804808028081001000804004002008040020120c808120c808120c809f0401200366559a04014b3fffffffffffff6a52ef1c23a0016080800c924000080014412e682200002010080300e058260c0361284e1405e2088c2609af010010000a32000000080044020a08400")
 #   session_dict structure
 #
 #    session_dict['STATE'] = 0
@@ -119,42 +137,48 @@ NON_IP_PACKET_4 = '0102030405060708090a0102030405060708090a0102030405060708090a0
 ######################################################################################################################################
 #                                                       GENERAL PROCEDURES:                                                          #
 ######################################################################################################################################
+def print_log(session_dict, log_message):
+    if 'IMSI' in session_dict:
+        logging.info(f"{session_dict['IMSI']} {log_message}")
+    return session_dict
 
 def add_ns(ns_name,veth,nseth,ue_ip):
     sys_ns=os.popen("ip netns show").read()
     if ns_name in sys_ns:
-        os.popen(f"ip netns del {ns_name}")
-    os.popen(f"ip netns add {ns_name}")
+        if os.system(f"ip netns del {ns_name}") != 0:
+            logging.error( f"Error deleting namespace {ns_name} ++++++++++++")
+    if os.system(f"ip netns add {ns_name}") != 0:
+        logging.error( f"Error adding namespace {ns_name} -------------")
     veth_ns=os.popen(f"ip link show type veth").read()
     if veth in veth_ns:
-        os.popen(f"ip link del {veth}")
-    os.popen(f"ip link add {veth} type veth peer name {nseth}")
+        os.system(f"ip link del {veth}")
+    os.system(f"ip link add {veth} type veth peer name {nseth}")
     veth_exists=os.popen("ip link show type veth").read()
     if veth in veth_exists and nseth in veth_exists:
-        logging.info("veth added successfully")
-    os.system(f"ip link set {nseth} netns {ns_name}")
-    os.system(f"ip netns exec {ns_name} ifconfig {nseth} {ue_ip}/24 up")
-    os.system(f"ip link set dev {veth} master {bridge_name}")
+        logging.info(f"*************** {veth} added successfully")
     os.system(f"ip link set dev {veth} up")
+    os.system(f"ip link set {nseth} netns {ns_name}")
+    os.system(f"ifconfig {veth} hw ether ee:ee:ee:ee:ee:ee")
+    os.system(f"ip netns exec {ns_name} ip addr add  {ue_ip}/32 dev {nseth}")
+    os.system(f"ip netns exec {ns_name} ifconfig {nseth} up")
+    os.system(f"ip netns exec {ns_name} ifconfig {nseth} mtu 1450")
+    os.system(f"ip netns exec {ns_name} ip route add 169.254.1.1 dev {nseth} scope link")
+    os.system(f"ip netns exec {ns_name} ip route add default via 169.254.1.1 dev {nseth}")
+    os.system(f"ip netns exec {ns_name} arp -s 169.254.1.1 ee:ee:ee:ee:ee:ee")
+    os.system(f"ip netns exec {ns_name} ln -fs /etc/resolvconf/resolv.conf.d/head /etc/resolv.conf")
+    os.system(f"echo 1 >/proc/sys/net/ipv4/conf/{veth}/proxy_arp")
+    os.system(f"ifconfig {veth} up")
+    os.system(f"ip route add {ue_ip} dev {veth} scope link")
     os.system(f"ip netns exec {ns_name} ip  link set  lo up")
-    try:
-        br_ip_list=[n['addr'] for n in netifaces.ifaddresses(bridge_name)[2] ]
-    except:
-        br_ip_list=[]
-    subnet=re.findall(r"[\d]*.[\d]*.[\d]*.",ue_ip)[0]
-    if f"{subnet}1" not in br_ip_list:
-        os.popen(f"ip addr add {subnet}1/24 dev {bridge_name}")
-    os.popen(f"ip netns exec {ns_name} ip route add default via {subnet}1 dev {nseth}")
+    os.system(f"ip netns exec {ns_name} ethtool -K {nseth} tx off")
+    mac_addr=str(os.popen(f"ip netns exec {ns_name} cat /sys/class/net/{nseth}/address").read()).strip()
+    global down_gtp
+    down_gtp[socket.inet_aton(ue_ip)]=[mac_addr,str(veth)]
 
 def delete_ns(ns_name,veth):
     sys_ns=os.popen("ip netns show").read()
     if ns_name in sys_ns:
         os.popen(f"ip netns del {ns_name}")
-
-def bridge_up():
-    os.system(f"ip link del {bridge_name} ")
-    os.system(f"ip link add {bridge_name} type bridge")
-    os.system(f"ip link set dev {bridge_name} up")
 
 def ue_eth_pair(ue_pair_val=None):
     global ue_eth
@@ -259,7 +283,6 @@ def session_dict_initialization(session_dict):
     
     session_dict['S1-TYPE'] = "4G"
     session_dict['MOBILE-IDENTITY-TYPE'] = "IMSI" 
-    session_dict['SESSION-SESSION-TYPE'] = "NONE"
     session_dict['SESSION-TYPE'] = "4G"
     session_dict['SESSION-TYPE-TUN'] = 1
     session_dict['PDP-TYPE'] = 1
@@ -652,10 +675,10 @@ def https_res_ck_ik(server, rand, autn):
 def S1SetupRequest(dic):
 
     IEs = []
-    IEs.append({'id': 59, 'value': ('Global-ENB-ID', {'pLMNidentity': dic['ENB-PLMN'], 'eNB-ID' : ('macroENB-ID', (dic['ENB-ID'], 20))}), 'criticality': 'reject'})
+    IEs.append({'id': 59, 'value': ('Global-ENB-ID', {'pLMNidentity': dic['ENB-PLMN'], 'eNB-ID' : ('homeENB-ID', (dic['ENB-ID'], 28))}), 'criticality': 'reject'})
     IEs.append({'id': 60, 'value': ('ENBname', dic['ENB-NAME']), 'criticality': 'ignore'})    
     if dic['S1-TYPE'] == "4G" :
-        IEs.append({'id': 64, 'value': ('SupportedTAs', [{'tAC': dic['ENB-TAC1'], 'broadcastPLMNs': [dic['ENB-PLMN']]}, {'tAC': dic['ENB-TAC2'], 'broadcastPLMNs': [dic['ENB-PLMN']]}]), 'criticality': 'reject'})    
+        IEs.append({'id': 64, 'value': ('SupportedTAs', [{'tAC': dic['ENB-TAC1'], 'broadcastPLMNs': [dic['ENB-PLMN']]}]), 'criticality': 'reject'})    
     elif dic['S1-TYPE'] == "NBIOT":
         IEs.append({'id': 64, 'value': ('SupportedTAs', [{'tAC': dic['ENB-TAC-NBIOT'], 'broadcastPLMNs': [dic['ENB-PLMN']], 'iE-Extensions': [{'id':232, 'criticality': 'reject', 'extensionValue':('RAT-Type','nbiot')}]}]), 'criticality': 'reject'})        
     elif dic['S1-TYPE'] == "BOTH":
@@ -663,10 +686,27 @@ def S1SetupRequest(dic):
     IEs.append({'id': 137, 'value': ('PagingDRX', 'v128'), 'criticality': 'ignore'})
     if dic['S1-TYPE'] == "NBIOT" or dic['S1-TYPE'] == "BOTH":
         IEs.append({'id': 234, 'value': ('NB-IoT-DefaultPagingDRX', 'v256'), 'criticality': 'ignore'})  
-    val = ('initiatingMessage', {'procedureCode': 17, 'value': ('S1SetupRequest', {'protocolIEs': IEs}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending S1SetupRequest")
+    val = ('initiatingMessage', {'procedureCode': 17, 'value': ('S1SetupRequest', {'protocolIEs': IEs}), 'criticality': 'reject'})
+    dic = print_log(dic, "S1AP: sending S1SetupRequest")
     return val
 
+def PathSwitchRequest(dic,user_dict):
+    IEs = []
+    IEs_RABs_List=[]
+    IEs.append({'id': 8, 'value': ('ENB-UE-S1AP-ID', dic['ENB-UE-S1AP-ID']), 'criticality': 'reject'})
+    for rab in range(len(dic['e_RAB_id'])) :
+        e_RAB_id = dic['e_RAB_id'][rab]
+        IEs_RAB = {'id': 23, 'value': ('E-RABToBeSwitchedDLItem', {'e-RAB-ID': e_RAB_id, 'transportLayerAddress': (dic['ENB-GTP-ADDRESS-INT'], 32), 'gTP-TEID': (struct.pack('>I', upteid_get()+100000)) }), 'criticality': 'ignore'}
+        IEs_RABs_List.append(IEs_RAB)
+    IEs.append({'id': 22, 'value': ('E-RABToBeSwitchedDLList', IEs_RABs_List), 'criticality': 'ignore'})
+    IEs.append({'id': 88, 'value': ('MME-UE-S1AP-ID', dic['MME-UE-S1AP-ID']), 'criticality': 'reject'})
+    IEs.append({'id': 100, 'value': ('EUTRAN-CGI', {'cell-ID': (dic['ENB-CELLID'], 28), 'pLMNidentity': dic['ENB-PLMN']}), 'criticality': 'ignore'})
+    IEs.append({'id': 67, 'value': ('TAI', {'pLMNidentity': dic['ENB-PLMN'], 'tAC': dic['ENB-TAC']}), 'criticality': 'reject'})
+    IEs.append({'id': 107, 'value': ('UESecurityCapabilities',{'encryptionAlgorithms': (57344,16), 'integrityProtectionAlgorithms': (57344,16)}), 'criticality': 'ignore'})
+    IEs.append({'id': 157, 'value': ('GUMMEI', {'pLMN-Identity': dic['ENB-PLMN'], 'mME-Group-ID': user_dict['enb']['MME-GROUP-ID'], 'mME-Code': user_dict['enb']['MME-CODE']}), 'criticality': 'ignore'})
+    val = ('initiatingMessage', {'procedureCode': 3, 'value': ('PathSwitchRequest', {'protocolIEs': IEs}), 'criticality': 'reject'})
+    dic = print_log(dic, "S1AP: sending PathSwitchRequest")
+    return val
 
 
 def S1SetupResponseProcessing(IEs, dic):
@@ -675,7 +715,6 @@ def S1SetupResponseProcessing(IEs, dic):
     servedGroupIDs = b''
     servedMMECs = b''
     RelativeMMECapacity = 0
-    
     for i in IEs:
         if i['id'] == 61:
             mme_name = i['value'][1]
@@ -716,21 +755,60 @@ def MMEConfigurationUpdateAcknowledge(IEs, dic):
             dic['MME-RELATIVE-CAPACITY'] = RelativeMMECapacity
 
     answer = ('successfulOutcome', {'procedureCode': 30, 'value': ('MMEConfigurationUpdateAcknowledge', {'protocolIEs': []}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending MMEConfigurationUpdateAcknowledge")
+    dic = print_log(dic, "S1AP: sending MMEConfigurationUpdateAcknowledge")
     return answer, dic
 
+def ENBConfigurationUpdate(dic,users):
+    IEs = []
+    IEs.append({'id': 60, 'value': ('ENBname', 'newname'), 'criticality': 'ignore'})
+    IEs.append({'id': 64, 'value': ('SupportedTAs', [{'tAC': int(63).to_bytes(2, byteorder='big'), 'broadcastPLMNs': [return_plmn_s1ap('315010')]}, {'tAC': int(69).to_bytes(2, byteorder='big'), 'broadcastPLMNs': [return_plmn_s1ap('315011')]}]), 'criticality': 'reject'})
+    IEs.append({'id': 137, 'value': ('PagingDRX', 'v32'), 'criticality': 'ignore'})
+    val = ('initiatingMessage', {'procedureCode': 29, 'value': ('ENBConfigurationUpdate', {'protocolIEs': IEs}), 'criticality': 'reject'})
+    dic = print_log(dic, "S1AP: sending ENBConfigurationUpdate")
+    return val
 
-def Reset(dic):
+def Reset(dic,users):
 
     #assumes only one session so no need to check MME-UE-S1AP-ID and ENB-UE-S1AP-ID
     IEs = []
     IEs.append({'id': 2, 'value': ('Cause', ('misc', 'om-intervention')), 'criticality': 'ignore'})
-    IEs.append({'id': 92, 'value': ('ResetType', ('s1-Interface', 'reset-all')), 'criticality': 'ignore'})
+    id_pair=[]
+    for user in users:
+        if user != 'enb':
+            final_ie={'id': 91, 'value': ('UE-associatedLogicalS1-ConnectionItem', {'mME-UE-S1AP-ID': users[user]['MME-UE-S1AP-ID'],'eNB-UE-S1AP-ID': users[user]['ENB-UE-S1AP-ID']}), 'criticality': 'ignore'}
+            id_pair.append(final_ie)
+    if len(id_pair) == 0:
+        IEs.append({'id': 92, 'value': ('ResetType', ('s1-Interface', 'reset-all')), 'criticality': 'ignore'})
+    else:
+        IEs.append({'id': 92, 'value': ('ResetType', ('partOfS1-Interface', id_pair)), 'criticality': 'ignore'})
     
     val = ('initiatingMessage', {'procedureCode': 14, 'value': ('Reset', {'protocolIEs': IEs}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending Reset")
+    dic = print_log(dic, "S1AP: sending Reset")
     return val
-    
+
+def ResetAck(IEs,dic):
+    IE=[]
+    IEs_pair_List = []
+    for i in IEs:
+        if i['id']==92:
+            for j in (i['value'][1][1]):
+                id_pair=j['value'][1]
+                if 'mME-UE-S1AP-ID' in id_pair and 'eNB-UE-S1AP-ID' in id_pair:
+                    IEs_pair_List.append({'id': 91, 'value': ('UE-associatedLogicalS1-ConnectionItem', {'mME-UE-S1AP-ID': id_pair['mME-UE-S1AP-ID'],'eNB-UE-S1AP-ID': id_pair['eNB-UE-S1AP-ID']}), 'criticality': 'ignore'})
+    IE.append({'id': 93, 'value': ('UE-associatedLogicalS1-ConnectionListResAck', IEs_pair_List), 'criticality': 'ignore'})
+    answer = ('successfulOutcome', {'procedureCode': 14, 'value': ('ResetAcknowledge', {'protocolIEs': IE}), 'criticality': 'ignore'})
+    dic = print_log(dic, "S1AP: sending ResetAcknowledge")
+    return answer, dic
+
+def Overload(dic):
+
+    #assumes only one session so no need to check MME-UE-S1AP-ID and ENB-UE-S1AP-ID
+    IEs = []
+
+    val = ('initiatingMessage', {'procedureCode': 35, 'value': ('OverloadStop', {'protocolIEs': IEs}), 'criticality': 'ignore'})
+    dic = print_log(dic, "S1AP: sending overload")
+    return val
+
 ######################################################################################################################################
 ######################################################################################################################################
 
@@ -748,7 +826,8 @@ def nas_pco(pdp_type,pcscf_restoration):
     if pdp_type == 1:
         len_pco = struct.pack("!H", 32)
         if pcscf_restoration == False:
-            return b'\x80\x80\x21\x1c\x01\x00\x00\x1c\x81\x06\x00\x00\x00\x00\x82\x06\x00\x00\x00\x00\x83\x06\x00\x00\x00\x00\x84\x06\x00\x00\x00\x00\x00\x0c\x00\x00\x0e\x00'        
+            #return b'\x80\x80\x21\x1c\x01\x00\x00\x1c\x81\x06\x00\x00\x00\x00\x82\x06\x00\x00\x00\x00\x83\x06\x00\x00\x00\x00\x84\x06\x00\x00\x00\x00\x00\x0c\x00\x00\x0e\x00'        
+            return b'\x80\x80\x21\x10\x01\x00\x00\x10\x81\x06\x00\x00\x00\x00\x83\x06\x00\x00\x00\x00\x00\x0d\x00\xff\x00\x03\x13\x01\x84\xff\x01\x03\x13\x01\x84\xff\x02\x03\x13\x01\x84\x00\x0a\x00\x00\x05\x00\x00\x0e\x00\x00\x10\x00\x00\x11\x00\x00\x03\x00' 
         else:
             return b'\x80\x80\x21\x1c\x01\x00\x00\x1c\x81\x06\x00\x00\x00\x00\x82\x06\x00\x00\x00\x00\x83\x06\x00\x00\x00\x00\x84\x06\x00\x00\x00\x00\x00\x0c\x00\x00\x12\x00\x00\x0e\x00' 
     elif pdp_type == 2:
@@ -772,7 +851,6 @@ def nas_pdn_connectivity(eps_bearer_identity, pti, pdp_type, apn, pco, esm_infor
     esm_list.append((0,'V',bytes([pti]))) # procedure trnasaction identity
     esm_list.append((0,'V',bytes([208]))) # message type: pdn connectivity request
     esm_list.append((0,'V',bytes([(pdp_type<<4) + request_type])))
-
     if esm_information_transfer_flag != None:
         esm_list.append((0xD,'TV',esm_information_transfer_flag)) 
     if apn != None:
@@ -867,12 +945,15 @@ def nas_esm_data_transport(eps_bearer_identity, pti, user_data_container):
 
 #-------------------------------------------------------------#
 ### EMM ### :
-def nas_attach_request(type, esm_information_transfer_flag, eps_identity, pdp_type, attach_type, tmsi, lai, sms_update, pcscf_restoration, ksi=0):
+def nas_attach_request(type, esm_information_transfer_flag, eps_identity, pdp_type, attach_type, tmsi, lai, sms_update, pcscf_restoration, guti=None,ksi=0):
     emm_list = []
     emm_list.append((7,0))  # protocol discriminator / 
     emm_list.append((0,'V',bytes([65]))) # message type: attach request
-    emm_list.append((0,'V',bytes([(ksi<<4)  + attach_type])))    # eps attach type/ nas key set identifier (EPS Attach /Keyset 0)    
-    emm_list.append((0,'LV',eps_identity))  # eps mobile identity (imsi/odd number:9) + imsi. all in bcd)
+    emm_list.append((0,'V',bytes([(ksi<<4)  + attach_type])))    # eps attach type/ nas key set identifier (EPS Attach /Keyset 0)   
+    if guti==None:
+        emm_list.append((0,'LV',eps_identity))  # eps mobile identity (imsi/odd number:9) + imsi. all in bcd)
+    else:
+        emm_list.append((0,'LV',guti))
     if type[0] == "4G":
         emm_list.append((0,'LV',unhexlify('f0f0c04009')))
     elif type[0] == "NBIOT":
@@ -885,7 +966,8 @@ def nas_attach_request(type, esm_information_transfer_flag, eps_identity, pdp_ty
         emm_list.append((0,'LV-E',nas_pdn_connectivity(0,1,pdp_type,None,pco,esm_information_transfer_flag,4)))    
     else:
         emm_list.append((0,'LV-E',nas_pdn_connectivity(0,1,pdp_type,None,pco,esm_information_transfer_flag)))
-    
+    if guti!=None:
+        emm_list.append((0xE, 'TV', 0)) 
     if type[0] == "4G":
         if attach_type == 2 and lai != None:
             emm_list.append((0x13, 'TV', lai))
@@ -936,7 +1018,7 @@ def nas_attach_request(type, esm_information_transfer_flag, eps_identity, pdp_ty
             emm_list.append((0x10, 'TLV', tmsi[-3:-2] + bytes([(tmsi[-2]//64)*64])))             
         emm_list.append((0x6F, 'TLV', b'\xf0\x00\xf0\x00'))
     
-    
+#    emm_list.append((0x6F,'TLV',b'\xf0\x00\x70\x00'))     
     return eNAS.nas_encode(emm_list)
 
 
@@ -1136,7 +1218,7 @@ def ProcessUplinkNAS(message_type, dic):
         dic['NAS-ENC'] =  nas_service_request(12,dic['NAS-KEY-SET-IDENTIFIER'],dic['UP-COUNT']%256,b'\x00\x00')[0:2] #use first 2 bytes to calculate integrity 24.301 9.9.3.28
         mac_bytes = nas_hash_service_request(dic)
         dic['NAS'] = dic['NAS-ENC'] + mac_bytes[-2:]    
-        dic = eMENU.print_log(dic, "NAS: sending ServiceRequest")
+        dic = print_log(dic, "NAS: sending ServiceRequest")
 
     elif message_type == 'extended service request':
         dic['NAS-ENC'] = nas_extended_service_request(dic['NAS-KEY-SET-IDENTIFIER'], dic['S-TMSI'][1:5])
@@ -1145,7 +1227,7 @@ def ProcessUplinkNAS(message_type, dic):
     
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(1,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) 
-        dic = eMENU.print_log(dic, "NAS: sending ExtendingServiceRequest")
+        dic = print_log(dic, "NAS: sending ExtendingServiceRequest")
         
         #ativates ue context release after initialsetuprequest by mme
         dic['UECONTEXTRELEASE-CSFB'] = True
@@ -1158,7 +1240,7 @@ def ProcessUplinkNAS(message_type, dic):
 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(1,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC'])
-        dic = eMENU.print_log(dic, "NAS: sending TrackingAreaUpdateRequest")
+        dic = print_log(dic, "NAS: sending TrackingAreaUpdateRequest")
         
     elif message_type == 'tracking area update request periodic':
         dic['NAS-ENC'] = nas_tracking_area_update_request(dic['NAS-KEY-SET-IDENTIFIER'],3,dic['GUTI'], (dic['SESSION-TYPE'], dic['SESSION-SESSION-TYPE']), dic['TMSI'], dic['LAI'], dic['SMS-UPDATE-TYPE'])
@@ -1167,7 +1249,16 @@ def ProcessUplinkNAS(message_type, dic):
 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(1,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) 
-        dic = eMENU.print_log(dic, "NAS: sending TrackingAreaUpdateRequest")
+        dic = print_log(dic, "NAS: sending TrackingAreaUpdateRequest")
+
+    elif message_type == 'tracking area update request combine':
+        dic['NAS-ENC'] = nas_tracking_area_update_request(dic['NAS-KEY-SET-IDENTIFIER'],2,dic['GUTI'], (dic['SESSION-TYPE'], dic['SESSION-SESSION-TYPE']), dic['TMSI'], dic['LAI'], dic['SMS-UPDATE-TYPE'])
+        dic['UP-COUNT'] += 1
+        dic['DIR'] = 0
+
+        mac_bytes = nas_hash(dic)
+        dic['NAS'] = nas_security_protected_nas_message(1,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC'])
+        dic = print_log(dic, "NAS: sending TrackingAreaUpdateRequest")
 
     elif message_type == 'detach request':
         dic['NAS-ENC'] = nas_detach_request(dic['NAS-KEY-SET-IDENTIFIER'],1,dic['GUTI']) # normal detach (0---). EPS detach (-001)
@@ -1181,7 +1272,7 @@ def ProcessUplinkNAS(message_type, dic):
             dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) 
         else:
             dic['NAS'] = nas_security_protected_nas_message(1,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #com s1 em baixo vai no initialuemessage so com integrity
-        dic = eMENU.print_log(dic, "NAS: sending DetachRequest")   
+        dic = print_log(dic, "NAS: sending DetachRequest")   
     
     elif message_type == 'pdn connectivity request':
         pco = nas_pco(dic['PDP-TYPE'],dic['PCSCF-RESTORATION'])
@@ -1195,7 +1286,7 @@ def ProcessUplinkNAS(message_type, dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) 
-        dic = eMENU.print_log(dic, "NAS: sending PDNConnectivityRequest") 
+        dic = print_log(dic, "NAS: sending PDNConnectivityRequest") 
 
     elif message_type == 'pdn disconnect request':
         dic['NAS-ENC'] = nas_pdn_disconnect(0, 2, dic['EPS-BEARER-IDENTITY'][-1], None)
@@ -1205,7 +1296,7 @@ def ProcessUplinkNAS(message_type, dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) 
-        dic = eMENU.print_log(dic, "NAS: sending PDNDisconnectRequest") 
+        dic = print_log(dic, "NAS: sending PDNDisconnectRequest") 
 
     elif message_type == 'control plane service request':
         dic['NAS-ENC'] = nas_control_plane_service_request(dic['NAS-KEY-SET-IDENTIFIER'],dic['CPSR-TYPE'], None, None, None)
@@ -1215,7 +1306,7 @@ def ProcessUplinkNAS(message_type, dic):
         #dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(5,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) # 5 especifico para esta mensagem
-        dic = eMENU.print_log(dic, "NAS: sending ControlPlaneServiceRequest") 
+        dic = print_log(dic, "NAS: sending ControlPlaneServiceRequest") 
 
     elif message_type == 'control plane service request with esm message container':
         dic['NAS-ENC'] = nas_control_plane_service_request(dic['NAS-KEY-SET-IDENTIFIER'],dic['CPSR-TYPE'], dic['NAS-ENC'], None, b'\x20\x00')
@@ -1224,7 +1315,7 @@ def ProcessUplinkNAS(message_type, dic):
 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(5,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) # 5 especifico para esta mensagem
-        dic = eMENU.print_log(dic, "NAS: sending ControlPlaneServiceRequest")         
+        dic = print_log(dic, "NAS: sending ControlPlaneServiceRequest")         
         
     elif message_type == 'esm data transport':
         dic['NAS-ENC'] = nas_esm_data_transport(dic['EPS-BEARER-IDENTITY'][-1],0,dic['USER-DATA-CONTAINER'])
@@ -1234,7 +1325,7 @@ def ProcessUplinkNAS(message_type, dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending ESMDataTransport") 
+        dic = print_log(dic, "NAS: sending ESMDataTransport") 
 
     elif message_type == 'uplink nas transport': 
         SMS = b'\x19\x01\x3c\x00\x02\x00\x07\x91\x53\x91\x26\x01\x00\x00\x30\x01\x02\x0c\x91\x53\x91\x66\x78\x92\x30\x00\x00\x27\x45\xb7\x3d\x1d\x6e\xb5\xcb\xa0\x7a\x1b\x34\x6d\x4e\x41\x73\xb3\x19\x04\x0f\xcb\xc3\x20\x73\x58\x5f\x96\x83\xea\x6d\x10\xbd\x3c\xa7\x97\x01'    
@@ -1245,11 +1336,14 @@ def ProcessUplinkNAS(message_type, dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending UplinkNASTransport")
+        dic = print_log(dic, "NAS: sending UplinkNASTransport")
         
     return dic
 
 def ProcessDownlinkNAS(dic):
+    global user_dict
+    global gtp_dict
+    global down_gtp
     if dic['NAS'] == None:
         #exit. Nothing to do
         return dic
@@ -1281,7 +1375,7 @@ def ProcessDownlinkNAS(dic):
     if nas_list[0][1] == 2: message_type = nas_list[3][1]
     
     if message_type == 82: # authentication request
-        dic = eMENU.print_log(dic, "NAS: AuthenticatonRequest received")
+        dic = print_log(dic, "NAS: AuthenticatonRequest received")
         if dic['LOCAL_KEYS'] == True:
             dic['NAS'] = nas_authentication_response(dic['XRES'])
             if encrypted_flag == True:
@@ -1338,8 +1432,7 @@ def ProcessDownlinkNAS(dic):
      
 
     elif message_type == 84: # authentication reject
-        dic = eMENU.print_log(dic, "NAS: AuthenticatonReject received")
-        os.system(f"echo FAILED>/var/log/sim/ue_{dic['IMSI']}_status")
+        dic = print_log(dic, "NAS: AuthenticatonReject received")
         dic['NAS'] = None
         dic['STATE'] = 1
 
@@ -1348,7 +1441,7 @@ def ProcessDownlinkNAS(dic):
         if new_eps_security_flag == True:
             dic['UP-COUNT'] = -1    
             
-        dic = eMENU.print_log(dic, "NAS: SecurityMode received")
+        dic = print_log(dic, "NAS: SecurityMode received")
         imeisv_request = None
         for i in nas_list:
             if i[0] == 'selected nas security algorithms':
@@ -1373,10 +1466,10 @@ def ProcessDownlinkNAS(dic):
         mac_bytes = nas_hash(dic)
         
         dic['NAS'] = nas_security_protected_nas_message(4,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC'])
-        dic = eMENU.print_log(dic, "NAS: sending SecurityModeComplete")
+        dic = print_log(dic, "NAS: sending SecurityModeComplete")
 
     elif message_type == 66: #attach accept
-        dic = eMENU.print_log(dic, "NAS: AttachAccept received")  
+        dic = print_log(dic, "NAS: AttachAccept received")  
        
         for i in nas_list:
             if i[0] == 'esm message container':
@@ -1395,7 +1488,7 @@ def ProcessDownlinkNAS(dic):
                     elif m[0] == 'pdn address':
                         dic['PDN-ADDRESS'][position] = m[1]
                         pdn_address = eNAS.decode_pdn_address(dic['PDN-ADDRESS'][position])
-                        dic = eMENU.print_log(dic, pdn_address)
+                        dic = print_log(dic, pdn_address)
                         #if dic['PDN-ADDRESS-IPV4'] is not None:                        
                         #    subprocess.call("ip addr del " + dic['PDN-ADDRESS-IPV4'] + "/32 dev tun" + str(dic['IMSI']), shell=True) 
                         dic['PDN-ADDRESS-IPV4'] = None
@@ -1426,39 +1519,35 @@ def ProcessDownlinkNAS(dic):
                     elif m[0] == 'access point name':
                         
                         dic['EPS-BEARER-APN'][position] = m[1]
-                        dic = eMENU.print_log(dic, eNAS.decode_apn(dic['EPS-BEARER-APN'][position]))
+                        dic = print_log(dic, eNAS.decode_apn(dic['EPS-BEARER-APN'][position]))
                         
             elif i[0] == 'guti':
                 dic['GUTI'] = i[1]
                 dic['S-TMSI'] = i[1][-5:]
                 dic['ENCODED-GUTI'] = dic['GUTI']               
-                dic = eMENU.print_log(dic, eNAS.decode_eps_mobile_identity(dic['GUTI'] ))
+                dic = print_log(dic, eNAS.decode_eps_mobile_identity(dic['GUTI'] ))
                 
             elif i[0] == 'ms identity':
                 dic['TMSI'] = i[1]
-                dic = eMENU.print_log(dic, dic['TMSI'])
+                dic = print_log(dic, dic['TMSI'])
             elif i[0] == 'location area identification':
                 dic['LAI'] = i[1]
-                dic = eMENU.print_log(dic, dic['LAI'])
                 
                
         dic['NAS-ENC'] = nas_attach_complete(dic['EPS-BEARER-IDENTITY'][position])
         dic['UP-COUNT'] += 1 
         dic['DIR'] = 0
-        global gtp_dict
         gtp_dict[dic['GTP-KEY']] =((dic['SGW-TEID'])[-1],(dic['SGW-GTP-ADDRESS'])[-1])
         nas_encrypted = nas_encrypt(dic)
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending AttachComplete")
-        os.system(f"echo CONNECTED>/var/log/sim/ue_{dic['IMSI']}_status")
+        dic = print_log(dic, "NAS: sending AttachComplete")
         dic['STATE'] = 2
 
 
     elif message_type == 68: #attach reject
-        dic = eMENU.print_log(dic, "NAS: AttachReject received")
-        os.system(f"echo FAILED>/var/log/sim/ue_{dic['IMSI']}_status")
+        dic = print_log(dic, "NAS: AttachReject received")
         dic['NAS'] = None
         dic['STATE'] = 1
         
@@ -1467,7 +1556,7 @@ def ProcessDownlinkNAS(dic):
         if len(dic['SGW-GTP-ADDRESS']) > 0:
             #os.write(dic['PIPE-OUT-GTPU-ENCAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + dic['SGW-TEID'][-1])
             #os.write(dic['PIPE-OUT-GTPU-DECAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + b'\x00\x00\x00' + bytes([dic['RAB-ID'][-1]]))
-            dic = eMENU.print_log(dic, "GTP-U: Deactivation due to DetachRequest received")
+            dic = print_log(dic, "GTP-U: Deactivation due to DetachRequest received")
         
         dic['RAB-ID'] = []
         dic['SGW-GTP-ADDRESS'] = []
@@ -1479,8 +1568,8 @@ def ProcessDownlinkNAS(dic):
         dic['PDN-ADDRESS'] = []      
         dic['STATE'] = 1
     
-        dic = eMENU.print_log(dic, "NAS: DetachRequest received")
-        dic = eMENU.print_log(dic, [nas_list[-1]])
+        dic = print_log(dic, "NAS: DetachRequest received")
+        dic = print_log(dic, [nas_list[-1]])
         
         dic['NAS-ENC'] = nas_detach_accept()
         dic['UP-COUNT'] += 1 
@@ -1489,15 +1578,21 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending DetachAccept")
+        dic = print_log(dic, "NAS: sending DetachAccept")
+        if dic['IMSI'] in user_dict:
+            del down_gtp[socket.inet_aton(dic['PDN-ADDRESS-IPV4'])]
+            del gtp_dict[dic['GTP-KEY']]
+            del user_dict[dic['IMSI']]
+            ue_eth_pair(dic['UE-NAMESPACE'])
+            delete_ns(dic['IMSI'],dic['UE-NAMESPACE'][1])
 
     elif message_type == 70: #detach accept
         if len(dic['SGW-GTP-ADDRESS']) > 0:
             #os.write(dic['PIPE-OUT-GTPU-ENCAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + dic['SGW-TEID'][-1])
             #os.write(dic['PIPE-OUT-GTPU-DECAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + b'\x00\x00\x00' + bytes([dic['RAB-ID'][-1]]))
-            dic = eMENU.print_log(dic, "GTP-U: Deactivation due to DetachAccept received")
+            dic = print_log(dic, "GTP-U: Deactivation due to DetachAccept received")
         
-        dic = eMENU.print_log(dic, "NAS: DetachAccept received")
+        dic = print_log(dic, "NAS: DetachAccept received")
         dic['NAS'] = None
         dic['RAB-ID'] = []
         dic['SGW-GTP-ADDRESS'] = []
@@ -1508,8 +1603,8 @@ def ProcessDownlinkNAS(dic):
         dic['EPS-BEARER-APN'] = []
         dic['PDN-ADDRESS'] = []    
         dic['STATE'] = 1
-        global user_dict
         if dic['IMSI'] in user_dict:
+            del down_gtp[socket.inet_aton(dic['PDN-ADDRESS-IPV4'])]
             del gtp_dict[dic['GTP-KEY']]
             del user_dict[dic['IMSI']]
             ue_eth_pair(dic['UE-NAMESPACE'])
@@ -1517,12 +1612,12 @@ def ProcessDownlinkNAS(dic):
             
 
     elif message_type == 73: #tracking area update accept
-        dic = eMENU.print_log(dic, "NAS: TrackingAreaUpdateAccept received")
+        dic = print_log(dic, "NAS: TrackingAreaUpdateAccept received")
         dic['NAS'] = None #so envia tau complete se guti tiver mudado
         
         for i in nas_list:
             if i[0] == 'guti':
-                dic = eMENU.print_log(dic, str(eNAS.decode_eps_mobile_identity(dic['GUTI'] )))
+                dic = print_log(dic, str(eNAS.decode_eps_mobile_identity(dic['GUTI'] )))
                 if dic['GUTI'] != i[1] and dic['NAS'] == None: # new GUTI assigned
                     
                     dic['NAS-ENC'] = nas_tracking_area_update_complete()
@@ -1532,7 +1627,7 @@ def ProcessDownlinkNAS(dic):
                     dic['NAS-ENC'] = nas_encrypted 
                     mac_bytes = nas_hash(dic)
                     dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-                    dic = eMENU.print_log(dic, "NAS: sending trackingAreaUpdateComplete")
+                    dic = print_log(dic, "NAS: sending trackingAreaUpdateComplete")
                 dic['GUTI'] = i[1]
                 dic['S-TMSI'] = i[1][-5:]
 
@@ -1546,7 +1641,7 @@ def ProcessDownlinkNAS(dic):
                     dic['NAS-ENC'] = nas_encrypted 
                     mac_bytes = nas_hash(dic)
                     dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-                    dic = eMENU.print_log(dic, "NAS: sending trackingAreaUpdateComplete")
+                    dic = print_log(dic, "NAS: sending trackingAreaUpdateComplete")
                     
                 dic['TMSI'] = i[1]
             elif i[0] == 'location area identification':
@@ -1556,11 +1651,11 @@ def ProcessDownlinkNAS(dic):
        
 
     elif message_type == 75: #tracking area update reject
-        dic = eMENU.print_log(dic, "NAS: TrackingAreaUpdateReject received")
+        dic = print_log(dic, "NAS: TrackingAreaUpdateReject received")
         dic['NAS'] = None
 
     elif message_type == 80: #guti reallocation command
-        dic = eMENU.print_log(dic, "NAS: GUTIReallocationCommand received")
+        dic = print_log(dic, "NAS: GUTIReallocationCommand received")
         
         for i in nas_list:
             if i[0] == 'guti':   
@@ -1573,20 +1668,20 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending GUTIReallocationComplete")
+        dic = print_log(dic, "NAS: sending GUTIReallocationComplete")
         
 
 
     elif message_type == 85: #identity request 
-        dic = eMENU.print_log(dic, " NAS: IdentityRequest received")
+        dic = print_log(dic, " NAS: IdentityRequest received")
         for i in nas_list:
             if i[0] == 'identity type':
                 if i[1] == 1: # imsi
                     dic['NAS'] = nas_identity_response('9' + dic['IMSI'])
-                    dic = eMENU.print_log(dic, "NAS: sending IdentityResponse (IMSI)")
+                    dic = print_log(dic, "NAS: sending IdentityResponse (IMSI)")
                 elif i[1] == 3: # imeisv
                     dic['NAS'] = nas_identity_response('3' + dic['IMEISV'] + 'f')
-                    dic = eMENU.print_log(dic, "NAS: sending IdentityResponse (IMEI-SV)")                
+                    dic = print_log(dic, "NAS: sending IdentityResponse (IMEI-SV)")                
                 
                 if encrypted_flag == True:
                     dic['NAS-ENC'] = dic['NAS'] 
@@ -1601,15 +1696,15 @@ def ProcessDownlinkNAS(dic):
 
                     
     elif message_type == 96: #emm status    
-        dic = eMENU.print_log(dic, "NAS: EMMStatus received")
+        dic = print_log(dic, "NAS: EMMStatus received")
         dic['NAS'] = None
         
     elif message_type == 97: #emm information    
-        dic = eMENU.print_log(dic, "NAS: EMMInformation received")
+        dic = print_log(dic, "NAS: EMMInformation received")
         dic['NAS'] = None
 
     elif message_type == 98: #downlink nas transport 
-        dic = eMENU.print_log(dic, "NAS: DownlinkNASTransport received")
+        dic = print_log(dic, "NAS: DownlinkNASTransport received")
         dic['NAS'] = None
         
         for i in nas_list:
@@ -1628,7 +1723,7 @@ def ProcessDownlinkNAS(dic):
                     dic['NAS-ENC'] = nas_encrypted 
                     mac_bytes = nas_hash(dic)
                     dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-                    dic = eMENU.print_log(dic, "NAS: sending UplinkNASTransport")
+                    dic = print_log(dic, "NAS: sending UplinkNASTransport")
                     
 
                     if i[1][0] < 128:  
@@ -1641,29 +1736,29 @@ def ProcessDownlinkNAS(dic):
                         dic['NAS-ENC'] = nas_encrypted 
                         mac_bytes = nas_hash(dic)
                         dic['NAS-SMS-MT'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-                        dic = eMENU.print_log(dic, "NAS: sending UplinkNASTransport")
+                        dic = print_log(dic, "NAS: sending UplinkNASTransport")
                     
                     
         
         
 
     elif message_type == 78: #service reject
-        dic = eMENU.print_log(dic, "NAS: ServiceReject received")
+        dic = print_log(dic, "NAS: ServiceReject received")
         dic['NAS'] = None
 
     elif message_type == 79: #service accepted
-        dic = eMENU.print_log(dic, "NAS: ServiceAccepted received")
+        dic = print_log(dic, "NAS: ServiceAccepted received")
         dic['NAS'] = None
         
     elif message_type == 100: #CsServiceNotification received
-        dic = eMENU.print_log(dic, "NAS: CsServiceNotification received")
+        dic = print_log(dic, "NAS: CsServiceNotification received")
         dic['NAS-ENC'] = nas_extended_service_request(dic['NAS-KEY-SET-IDENTIFIER'], dic['S-TMSI'][1:5])
         dic['UP-COUNT'] += 1 
         dic['DIR'] = 0
     
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(1,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) 
-        dic = eMENU.print_log(dic, "NAS: sending ExtendingServiceRequest")
+        dic = print_log(dic, "NAS: sending ExtendingServiceRequest")
         
         #ativates ue context release after initialsetuprequest by mme
         dic['UECONTEXTRELEASE-CSFB'] = True
@@ -1675,7 +1770,7 @@ def ProcessDownlinkNAS(dic):
 #### ESM #####
 
     elif message_type == 193: # activate default eps bearer context request
-        dic = eMENU.print_log(dic, "NAS: ActivateDefaultEPSbearerContextRequest received")       
+        dic = print_log(dic, "NAS: ActivateDefaultEPSbearerContextRequest received")       
         for i in nas_list:
  
             if i[0] == 'eps bearer identity':
@@ -1691,7 +1786,7 @@ def ProcessDownlinkNAS(dic):
                 dic['PDN-ADDRESS'][position] = i[1]
                 pdn_address = eNAS.decode_pdn_address(dic['PDN-ADDRESS'][position])
                 
-                dic = eMENU.print_log(dic, pdn_address)
+                dic = print_log(dic, pdn_address)
                 #if dic['PDN-ADDRESS-IPV4'] is not None:
                 #    subprocess.call("ip addr del " + dic['PDN-ADDRESS-IPV4'] + "/32 dev tun" + str(dic['IMSI']), shell=True)
                 dic['PDN-ADDRESS-IPV4'] = None
@@ -1713,7 +1808,7 @@ def ProcessDownlinkNAS(dic):
             elif i[0] == 'access point name':
                 
                 dic['EPS-BEARER-APN'][position] = i[1]
-                dic = eMENU.print_log(dic, eNAS.decode_apn(dic['EPS-BEARER-APN'][position]))
+                dic = print_log(dic, eNAS.decode_apn(dic['EPS-BEARER-APN'][position]))
                         
         dic['NAS-ENC'] = nas_activate_default_eps_bearer_context_accept(dic['EPS-BEARER-IDENTITY'][position],None)
         dic['UP-COUNT'] += 1 
@@ -1722,11 +1817,11 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending ActivateDefaultEPSbearerContextAccept")
+        dic = print_log(dic, "NAS: sending ActivateDefaultEPSbearerContextAccept")
 
 
     elif message_type == 197: # 
-        dic = eMENU.print_log(dic, "NAS: ActivateDedicatedEPSbearerContextRequest received") 
+        dic = print_log(dic, "NAS: ActivateDedicatedEPSbearerContextRequest received") 
         for i in nas_list:
  
             if i[0] == 'eps bearer identity':
@@ -1745,11 +1840,11 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending ActivateDedicatedEPSbearerContextAccept")
+        dic = print_log(dic, "NAS: sending ActivateDedicatedEPSbearerContextAccept")
 
 
     elif message_type == 201: #modify eps bearer context request
-        dic = eMENU.print_log(dic, "NAS: ModifyEPSBearerContextRequest received")
+        dic = print_log(dic, "NAS: ModifyEPSBearerContextRequest received")
         for i in nas_list:
             if i[0] == 'eps bearer identity':
                 bearer = i[1]
@@ -1761,10 +1856,10 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending ModifyEPSBearerContextAccept")        
+        dic = print_log(dic, "NAS: sending ModifyEPSBearerContextAccept")        
         
     elif message_type == 205: #deactivate EPS Bearer context request
-        dic = eMENU.print_log(dic, "NAS: DeactivateEPSbearerContextRequest received")  
+        dic = print_log(dic, "NAS: DeactivateEPSbearerContextRequest received")  
         for i in nas_list:
  
             if i[0] == 'eps bearer identity':
@@ -1787,18 +1882,18 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending DeactivateEPSbearerContextAccept")       
+        dic = print_log(dic, "NAS: sending DeactivateEPSbearerContextAccept")       
         
         
     elif message_type == 209: #PDN Connectivity reject
-        dic = eMENU.print_log(dic, "NAS: PDNConnectivityReject received")
-        dic = eMENU.print_log(dic, [nas_list[-1]])
+        dic = print_log(dic, "NAS: PDNConnectivityReject received")
+        dic = print_log(dic, [nas_list[-1]])
        
         dic['NAS'] = None
         
         
     elif message_type == 217: #esm information request
-        dic = eMENU.print_log(dic, "NAS: ESMInformationRequest received")
+        dic = print_log(dic, "NAS: ESMInformationRequest received")
         dic['NAS-ENC'] = nas_esm_information_response(0,1,return_apn(dic['APN']),None)
         dic['UP-COUNT'] += 1 
         dic['DIR'] = 0
@@ -1806,11 +1901,11 @@ def ProcessDownlinkNAS(dic):
         dic['NAS-ENC'] = nas_encrypted 
         mac_bytes = nas_hash(dic)
         dic['NAS'] = nas_security_protected_nas_message(2,mac_bytes,bytes([dic['UP-COUNT']%256]),dic['NAS-ENC']) #mudei de 4 para 2
-        dic = eMENU.print_log(dic, "NAS: sending ESMInformationResponse")
+        dic = print_log(dic, "NAS: sending ESMInformationResponse")
         
         
     elif message_type == 235:
-        dic = eMENU.print_log(dic, "NAS: ESMDataTransport received")    
+        dic = print_log(dic, "NAS: ESMDataTransport received")    
         for i in nas_list: 
             if i[0] == 'user data container':
                 #os.write(dic['NBIOT-TUN'],i[1])
@@ -1819,7 +1914,7 @@ def ProcessDownlinkNAS(dic):
         
             
     else:   # generic rule to not send NAS if messasge type not known, or handle yet by the function
-        dic = eMENU.print_log(dic, "NAS: MessageType =" + str(message_type) + " received")
+        dic = print_log(dic, "NAS: MessageType =" + str(message_type) + " received")
         dic['NAS'] = None
 
     
@@ -1831,7 +1926,7 @@ def ProcessDownlinkNAS(dic):
 ###############
 #  S1AP Msg   #
 ###############
-def InitialUEMessage(dic):
+def InitialUEMessage(dic,msg=None):
     IEs = []
     IEs.append({'id': 8, 'value': ('ENB-UE-S1AP-ID', dic['ENB-UE-S1AP-ID']), 'criticality': 'reject'})
     IEs.append({'id': 26, 'value': ('NAS-PDU', dic['NAS']), 'criticality': 'reject'})
@@ -1848,10 +1943,12 @@ def InitialUEMessage(dic):
     
     if dic['S-TMSI'] != None:
         IEs.append({'id': 96, 'value': ('S-TMSI', {'mMEC': dic['S-TMSI'][0:1], 'm-TMSI': dic['S-TMSI'][1:5]}), 'criticality': 'reject'})
+    if 'GUTI' in dic and msg != None:
+        IEs.append({'id': 170, 'value': ('GUMMEIType', 'native'), 'criticality': 'ignore'})
 #    IEs.append({'id': 75, 'value': ('GUMMEI', {'pLMN-Identity': dic['ENB-PLMN'], 'mME-Group-ID': dic['MME-GROUP-ID'], 'mME-Code': dic['MME-CODE']}), 'criticality': 'reject'})
    
     val = ('initiatingMessage', {'procedureCode': 12, 'value': ('InitialUEMessage', {'protocolIEs': IEs}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending InitialUEMessage")
+    dic = print_log(dic, "S1AP: sending InitialUEMessage")
     return val
 
 
@@ -1869,7 +1966,7 @@ def UplinkNASTransport(dic):
 
     val = ('initiatingMessage', {'procedureCode': 13, 'value': ('UplinkNASTransport', {'protocolIEs': IEs}), 'criticality': 'ignore'})
         
-    dic = eMENU.print_log(dic, "S1AP: sending UplinkNASTransport")
+    dic = print_log(dic, "S1AP: sending UplinkNASTransport")
     return val     
 
 def ProcessLocationReportingControl(IEs, dic):
@@ -1892,7 +1989,7 @@ def ProcessLocationReportingControl(IEs, dic):
     
 
     val = ('initiatingMessage', {'procedureCode': 33, 'value': ('LocationReport', {'protocolIEs': IEs}), 'criticality': 'ignore'})     
-    dic = eMENU.print_log(dic, "S1AP: sending LocationReport")
+    dic = print_log(dic, "S1AP: sending LocationReport")
     return val, dic
 
 
@@ -1928,7 +2025,7 @@ def ProcessDownlinkNASTransport(IEs, dic):
                 elif dic['SESSION-TYPE'] == "NBIOT":            
                     IEs.append({'id': 67, 'value': ('TAI', {'pLMNidentity': dic['ENB-PLMN'], 'tAC': dic['ENB-TAC-NBIOT']}), 'criticality': 'ignore'})
                 val.append(('initiatingMessage', {'procedureCode': 13, 'value': ('UplinkNASTransport', {'protocolIEs': IEs}), 'criticality': 'ignore'}))
-            dic = eMENU.print_log(dic, "S1AP: sending UplinkNASTransport")
+            dic = print_log(dic, "S1AP: sending UplinkNASTransport")
         if dic['NAS-SMS-MT'] != None:
             IEs = []
             IEs.append({'id': 0, 'value': ('MME-UE-S1AP-ID', dic['MME-UE-S1AP-ID']), 'criticality': 'reject'})
@@ -1940,7 +2037,7 @@ def ProcessDownlinkNASTransport(IEs, dic):
             elif dic['SESSION-TYPE'] == "NBIOT":            
                 IEs.append({'id': 67, 'value': ('TAI', {'pLMNidentity': dic['ENB-PLMN'], 'tAC': dic['ENB-TAC-NBIOT']}), 'criticality': 'ignore'})
             val.append(('initiatingMessage', {'procedureCode': 13, 'value': ('UplinkNASTransport', {'protocolIEs': IEs}), 'criticality': 'ignore'}))
-            dic = eMENU.print_log(dic, "S1AP: sending UplinkNASTransport")        
+            dic = print_log(dic, "S1AP: sending UplinkNASTransport")        
             
             dic['NAS-SMS-MT'] = None
         return val, dic
@@ -1974,6 +2071,8 @@ def ProcessInitialContextSetupRequest(IEs, dic):
                 position = dic['RAB-ID'].index(e_RAB_id)                
                 dic['SGW-GTP-ADDRESS'][position] = (first_eRAB['transportLayerAddress'][0]).to_bytes(4, byteorder='big')
                 dic['SGW-TEID'][position] = first_eRAB['gTP-TEID']
+                dic['e_RAB_id'].append(e_RAB_id)
+                dic['dl-gtp-teid'].append(first_eRAB['gTP-TEID'])
                 if 'nAS-PDU' in first_eRAB:
                     nas.append(first_eRAB['nAS-PDU'])
               
@@ -1998,12 +2097,13 @@ def ProcessInitialContextSetupRequest(IEs, dic):
     IEs_RABs_List = []
     for m in range(Num_eRAB):
         e_RAB_id = eRAB_list[m]['value'][1]['e-RAB-ID']
-        IEs_RAB = {'id': 50, 'value': ('E-RABSetupItemCtxtSURes', {'e-RAB-ID': e_RAB_id, 'transportLayerAddress': (dic['ENB-GTP-ADDRESS-INT'], 32), 'gTP-TEID': (struct.pack('>I', upteid_get()))[1:] + bytes([e_RAB_id]) }), 'criticality': 'ignore'}
+        IEs_RAB = {'id': 50, 'value': ('E-RABSetupItemCtxtSURes', {'e-RAB-ID': e_RAB_id, 'transportLayerAddress': (dic['ENB-GTP-ADDRESS-INT'], 32), 'gTP-TEID': (struct.pack('>I', upteid_get()))  }), 'criticality': 'ignore'}
         IEs_RABs_List.append(IEs_RAB)
-        
-    IEs.append({'id': 51, 'value': ('E-RABSetupListCtxtSURes', IEs_RABs_List), 'criticality': 'ignore'})   
+        dic['ul-gtp-teid'].append((struct.pack('>I', upteid_get())))
+    IEs.append({'id': 51, 'value': ('E-RABSetupListCtxtSURes', IEs_RABs_List), 'criticality': 'ignore'})
+    val.append(UECapabilityInfoIndication(dic))
     val.append(('successfulOutcome', {'procedureCode': 9, 'value': ('InitialContextSetupResponse', {'protocolIEs': IEs}), 'criticality': 'ignore'}))
-    dic = eMENU.print_log(dic, "S1AP: sending InitialContextSetupResponse")
+    dic = print_log(dic, "S1AP: sending InitialContextSetupResponse")
  
     nas_processed = []
     
@@ -2029,12 +2129,11 @@ def ProcessInitialContextSetupRequest(IEs, dic):
                 IEs.append({'id': 67, 'value': ('TAI', {'pLMNidentity': dic['ENB-PLMN'], 'tAC': dic['ENB-TAC-NBIOT']}), 'criticality': 'ignore'})
             val.append(('initiatingMessage', {'procedureCode': 13, 'value': ('UplinkNASTransport', {'protocolIEs': IEs}), 'criticality': 'ignore'}))
       
-            dic = eMENU.print_log(dic, "S1AP: sending UplinkNASTransport")
+            dic = print_log(dic, "S1AP: sending UplinkNASTransport")
             
             
     if dic['UECONTEXTRELEASE-CSFB'] == True:            
         val.append(UEContextReleaseRequest(dic))
-        
     return val, dic
 
 
@@ -2064,6 +2163,8 @@ def ProcessERABSetupRequest(IEs, dic):
                                         
                 dic['SGW-GTP-ADDRESS'][position] = (first_eRAB['transportLayerAddress'][0]).to_bytes(4, byteorder='big')
                 dic['SGW-TEID'][position] = first_eRAB['gTP-TEID']
+                dic['e_RAB_id'].append(e_RAB_id)
+                dic['dl-gtp-teid'].append(first_eRAB['gTP-TEID'])
                 if 'nAS-PDU' in first_eRAB:
                     nas.append(first_eRAB['nAS-PDU'])
                     #dic['NAS'] = first_eRAB['nAS-PDU']
@@ -2084,12 +2185,12 @@ def ProcessERABSetupRequest(IEs, dic):
     IEs_RABs_List = []
     for m in range(Num_eRAB):
         e_RAB_id = eRAB_list[m]['value'][1]['e-RAB-ID']
-        IEs_RAB = {'id': 39, 'value': ('E-RABSetupItemBearerSURes', {'e-RAB-ID': e_RAB_id, 'transportLayerAddress': (dic['ENB-GTP-ADDRESS-INT'], 32), 'gTP-TEID': b'\x00\x00\x00' + bytes([e_RAB_id]) }), 'criticality': 'ignore'}
+        IEs_RAB = {'id': 39, 'value': ('E-RABSetupItemBearerSURes', {'e-RAB-ID': e_RAB_id, 'transportLayerAddress': (dic['ENB-GTP-ADDRESS-INT'], 32), 'gTP-TEID': (struct.pack('>I', upteid_get()))  }), 'criticality': 'ignore'}
         IEs_RABs_List.append(IEs_RAB)
-        
+        dic['ul-gtp-teid'].append((struct.pack('>I', upteid_get())))
     IEs.append({'id': 28, 'value': ('E-RABSetupListBearerSURes', IEs_RABs_List), 'criticality': 'ignore'})   
     val.append(('successfulOutcome', {'procedureCode': 5, 'value': ('E-RABSetupResponse', {'protocolIEs': IEs}), 'criticality': 'ignore'}))
-    dic = eMENU.print_log(dic, "S1AP: sending ERABSetupResponse")
+    dic = print_log(dic, "S1AP: sending ERABSetupResponse")
 
     #dic = ProcessDownlinkNAS(dic)
     
@@ -2118,7 +2219,7 @@ def ProcessERABSetupRequest(IEs, dic):
                 IEs.append({'id': 67, 'value': ('TAI', {'pLMNidentity': dic['ENB-PLMN'], 'tAC': dic['ENB-TAC-NBIOT']}), 'criticality': 'ignore'})
             val.append(('initiatingMessage', {'procedureCode': 13, 'value': ('UplinkNASTransport', {'protocolIEs': IEs}), 'criticality': 'ignore'}))    
       
-            dic = eMENU.print_log(dic, "S1AP: sending UplinkNASTransport")
+            dic = print_log(dic, "S1AP: sending UplinkNASTransport")
        
         
     return val, dic
@@ -2142,6 +2243,12 @@ def ProcessERABReleaseCommand(IEs, dic):
                     dic['RAB-ID'].pop(position)
                     dic['SGW-GTP-ADDRESS'].pop(position)
                     dic['SGW-TEID'].pop(position)
+                    if e_RAB_id in dic['e_rab_id']:
+                        index_value= dic['e_rab_id'].index(e_RAB_id)
+                        dic['e_rab_id'].pop(index_value)
+                        dic['ul-gtp-teid'].pop(index_value)
+                        dic['dl-gtp-teid'].pop(index_value)
+
             
             if len(dic['SGW-GTP-ADDRESS']) > 0:
                 #os.write(dic['PIPE-OUT-GTPU-ENCAPSULATE'],dic['GTP-U'] + dic['SGW-GTP-ADDRESS'][-1] + dic['SGW-TEID'][-1])
@@ -2165,8 +2272,8 @@ def ProcessERABReleaseCommand(IEs, dic):
         
     IEs.append({'id': 69, 'value': ('E-RABReleaseListBearerRelComp', IEs_RABs_List), 'criticality': 'ignore'})   
     val = ('successfulOutcome', {'procedureCode': 7, 'value': ('E-RABReleaseResponse', {'protocolIEs': IEs}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending ERABSetupResponse")
-    
+    dic = print_log(dic, "S1AP: sending ERABSetupResponse")
+     
     val2 = None
     if dic['NAS'] != None:
         IEs = []
@@ -2180,7 +2287,7 @@ def ProcessERABReleaseCommand(IEs, dic):
             IEs.append({'id': 67, 'value': ('TAI', {'pLMNidentity': dic['ENB-PLMN'], 'tAC': dic['ENB-TAC-NBIOT']}), 'criticality': 'ignore'})
         val2 = ('initiatingMessage', {'procedureCode': 13, 'value': ('UplinkNASTransport', {'protocolIEs': IEs}), 'criticality': 'ignore'})    
       
-        dic = eMENU.print_log(dic, "S1AP: sending UplinkNASTransport")
+        dic = print_log(dic, "S1AP: sending UplinkNASTransport")
     return [val, val2] , dic
 
 
@@ -2209,7 +2316,7 @@ def ProcessUEContextReleaseCommand(rec_dic,IEs, dic):
                                         IEs.append({'id': 8, 'value': ('ENB-UE-S1AP-ID', recv_id[1]['eNB-UE-S1AP-ID']), 'criticality': 'ignore'})   
 
     val = ('successfulOutcome', {'procedureCode': 23, 'value': ('UEContextReleaseComplete', {'protocolIEs': IEs}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending UEContextReleaseComplete")
+    dic = print_log(dic, "S1AP: sending UEContextReleaseComplete")
     
     # context release set s1ap-id to 0: means disable
     dic['MME-UE-S1AP-ID'] = 0
@@ -2219,7 +2326,7 @@ def ProcessUEContextReleaseCommand(rec_dic,IEs, dic):
         #os.write(dic['PIPE-OUT-GTPU-ENCAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + dic['SGW-TEID'][-1])
        # os.write(dic['PIPE-OUT-GTPU-DECAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + b'\x00\x00\x00' + bytes([dic['RAB-ID'][-1]]))
        pass
-    dic = eMENU.print_log(dic, "GTP-U: Deactivation due to ContextRelease")
+    dic = print_log(dic, "GTP-U: Deactivation due to ContextRelease")
     
     #if uecontext release was triggered by csfb
     if dic['UECONTEXTRELEASE-CSFB'] == True:
@@ -2239,7 +2346,7 @@ def ProcessUEContextModificationRequest(IEs, dic):
     IEs.append({'id': 8, 'value': ('ENB-UE-S1AP-ID', dic['ENB-UE-S1AP-ID']), 'criticality': 'ignore'})
 
     val.append(('successfulOutcome', {'procedureCode': 21, 'value': ('UEContextModificationResponse', {'protocolIEs': IEs}), 'criticality': 'ignore'}))
-    dic = eMENU.print_log(dic, "S1AP: sending UEContextModificationResponse")
+    dic = print_log(dic, "S1AP: sending UEContextModificationResponse")
              
            
     if dic['UECONTEXTRELEASE-CSFB'] == True:            
@@ -2298,17 +2405,34 @@ def UEContextReleaseRequest(dic):
         
   
     val = ('initiatingMessage', {'procedureCode': 18, 'value': ('UEContextReleaseRequest', {'protocolIEs': IEs}), 'criticality': 'ignore'})
-    dic = eMENU.print_log(dic, "S1AP: sending UEContextReleaseRequest")
+    dic = print_log(dic, "S1AP: sending UEContextReleaseRequest")
     
     if dic['GTP-U'] != b'\x02' and len(dic['SGW-GTP-ADDRESS']) > 0:
         
         #os.write(dic['PIPE-OUT-GTPU-ENCAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + dic['SGW-TEID'][-1])
         #os.write(dic['PIPE-OUT-GTPU-DECAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + b'\x00\x00\x00' + bytes([dic['RAB-ID'][-1]]))
         pass
-    dic = eMENU.print_log(dic, "GTP-U: Deactivation due to ContextRelease")
+    dic = print_log(dic, "GTP-U: Deactivation due to ContextRelease")
         
     return val
 
+def UECapabilityInfoIndication(dic):
+
+    #assumes only one session so no need to check MME-UE-S1AP-ID and ENB-UE-S1AP-ID
+    IEs = []
+    IEs.append({'id': 0, 'value': ('MME-UE-S1AP-ID', dic['MME-UE-S1AP-ID']), 'criticality': 'ignore'})
+    IEs.append({'id': 8, 'value': ('ENB-UE-S1AP-ID', dic['ENB-UE-S1AP-ID']), 'criticality': 'ignore'})
+    IEs.append({'id': 74, 'value': ('UERadioCapability', ue_cap), 'criticality': 'ignore'})
+    val = ('initiatingMessage', {'procedureCode': 22, 'value': ('UECapabilityInfoIndication', {'protocolIEs': IEs}), 'criticality': 'ignore'})
+    dic = print_log(dic, "S1AP: sending UECapabilityInfoIndication")
+
+    if dic['GTP-U'] != b'\x02' and len(dic['SGW-GTP-ADDRESS']) > 0:
+
+        #os.write(dic['PIPE-OUT-GTPU-ENCAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + dic['SGW-TEID'][-1])
+        #os.write(dic['PIPE-OUT-GTPU-DECAPSULATE'],b'\x02' + dic['SGW-GTP-ADDRESS'][-1] + b'\x00\x00\x00' + bytes([dic['RAB-ID'][-1]]))
+        pass
+
+    return val
 
 def ERABModificationIndication(dic):
     #assumes only one session so no need to check MME-UE-S1AP-ID and ENB-UE-S1AP-ID
@@ -2338,7 +2462,7 @@ def ERABModificationIndication(dic):
 
     IEs.append({'id': 264, 'value': ('SecondaryRATDataUsageReportList', SecondaryRATDataList), 'criticality': 'ignore'})
 
-    dic = eMENU.print_log(dic, "S1AP: sending E-RABModificationIndication")
+    dic = print_log(dic, "S1AP: sending E-RABModificationIndication")
     val = ('initiatingMessage', {'procedureCode': 50, 'value': ('E-RABModificationIndication', {'protocolIEs': IEs}), 'criticality': 'reject'})
 
     return val
@@ -2366,7 +2490,7 @@ def SecondaryRATDataUsageReport(dic):
 
     IEs.append({'id': 264, 'value': ('SecondaryRATDataUsageReportList', SecondaryRATDataList), 'criticality': 'ignore'})
 
-    dic = eMENU.print_log(dic, "S1AP: sending SecondaryRATDataUsageReport")
+    dic = print_log(dic, "S1AP: sending SecondaryRATDataUsageReport")
     val = ('initiatingMessage', {'procedureCode': 62, 'value': ('SecondaryRATDataUsageReport', {'protocolIEs': IEs}), 'criticality': 'reject'})
 
     return val
@@ -2381,23 +2505,30 @@ def send_gtpu(session_d):
     except:
         pass
 def ProcessS1AP(type,pdu_dict, client, session_dict):
-    
+ 
     if type == 'initiatingMessage':
         procedure, protocolIEs_list = pdu_dict['value'][0], pdu_dict['value'][1]['protocolIEs']
-        
         #Non UE Related:
         if procedure == 'MMEConfigurationUpdate':
-            session_dict = eMENU.print_log(session_dict, "S1AP: MMEConfigurationUpdate received")
+            session_dict = print_log(session_dict, "S1AP: MMEConfigurationUpdate received")
             answer, session_dict = MMEConfigurationUpdateAcknowledge(protocolIEs_list, session_dict)
             PDU.set_val(answer)
             message = PDU.to_aper()
             client = set_stream(client, 0)
             bytes_sent = client.send(message)
             client = set_stream(client, 1)
-        
+        elif procedure == 'Reset':
+            session_dict = print_log(session_dict, "S1AP: Reset received")
+            answer, session_dict = ResetAck(protocolIEs_list, session_dict)
+            PDU.set_val(answer)
+            message = PDU.to_aper()
+            client = set_stream(client, 0)
+            bytes_sent = client.send(message)
+            client = set_stream(client, 1)
+ 
         #UE Related:
         elif procedure == 'DownlinkNASTransport':
-            session_dict = eMENU.print_log(session_dict, "S1AP: DownlinkNASTransport received")
+            session_dict = print_log(session_dict, "S1AP: DownlinkNASTransport received")
             answer_list, session_dict = ProcessDownlinkNASTransport(protocolIEs_list, session_dict)
             for answer in answer_list:
                 if answer != None:
@@ -2406,7 +2537,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
                     bytes_sent = client.send(message)
         
         elif procedure == 'InitialContextSetupRequest':
-            session_dict = eMENU.print_log(session_dict, "S1AP: InitialContextSetupRequest received")
+            session_dict = print_log(session_dict, "S1AP: InitialContextSetupRequest received")
             answer_list, session_dict= ProcessInitialContextSetupRequest(protocolIEs_list, session_dict)
             for answer in answer_list:
                 if answer != None:
@@ -2415,7 +2546,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
                     bytes_sent = client.send(message)                     
                 
         elif procedure == 'UEContextReleaseCommand':
-            session_dict = eMENU.print_log(session_dict, "S1AP: UEContextReleaseCommand received")
+            session_dict = print_log(session_dict, "S1AP: UEContextReleaseCommand received")
             answer, session_dict = ProcessUEContextReleaseCommand(pdu_dict,protocolIEs_list, session_dict)
             if answer != None:
                 PDU.set_val(answer)
@@ -2424,7 +2555,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
                 
         elif procedure == 'Paging':   
             if session_dict['PROCESS-PAGING'] == True:        
-                session_dict = eMENU.print_log(session_dict, "S1AP: Paging received")
+                session_dict = print_log(session_dict, "S1AP: Paging received")
                 answer, session_dict = ProcessPaging(protocolIEs_list, session_dict)
                 if answer != None:
                     PDU.set_val(answer)
@@ -2432,7 +2563,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
                     bytes_sent = client.send(message) 
 
         elif procedure == 'E-RABSetupRequest':
-            session_dict = eMENU.print_log(session_dict, "S1AP: ERABSetupRequest received")            
+            session_dict = print_log(session_dict, "S1AP: ERABSetupRequest received")            
             answer_list, session_dict = ProcessERABSetupRequest(protocolIEs_list, session_dict)
             for answer in answer_list:
                 if answer != None:
@@ -2441,7 +2572,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
                     bytes_sent = client.send(message)                           
 
         elif procedure == 'E-RABReleaseCommand':
-            session_dict = eMENU.print_log(session_dict, "S1AP: ERABReleaseCommand received")            
+            session_dict = print_log(session_dict, "S1AP: ERABReleaseCommand received")            
             answer_list, session_dict = ProcessERABReleaseCommand(protocolIEs_list, session_dict)
             for answer in answer_list:
                 if answer != None:
@@ -2451,7 +2582,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
   
   
         elif procedure == 'LocationReportingControl':
-            session_dict = eMENU.print_log(session_dict, "S1AP: LocationReportingControl received")            
+            session_dict = print_log(session_dict, "S1AP: LocationReportingControl received")            
             answer, session_dict = ProcessLocationReportingControl(protocolIEs_list, session_dict)
             if answer != None:
                 PDU.set_val(answer)
@@ -2459,7 +2590,7 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
                 bytes_sent = client.send(message)           
 
         elif procedure == 'UEContextModificationRequest':
-            session_dict = eMENU.print_log(session_dict, "S1AP: UEContextModificationRequest received") 
+            session_dict = print_log(session_dict, "S1AP: UEContextModificationRequest received") 
             answer_list, session_dict = ProcessUEContextModificationRequest(protocolIEs_list, session_dict)
             for answer in answer_list:
                 if answer != None:
@@ -2469,21 +2600,21 @@ def ProcessS1AP(type,pdu_dict, client, session_dict):
 
 
         else:
-            session_dict = eMENU.print_log(session_dict, "S1AP: " + procedure + " received") 
+            session_dict = print_log(session_dict, "S1AP: " + procedure + " received") 
              
     elif type == 'successfulOutcome':
         procedure, protocolIEs_list = pdu_dict['value'][0], pdu_dict['value'][1]['protocolIEs']
         if procedure == "S1SetupResponse":
-            session_dict = eMENU.print_log(session_dict, "S1AP: S1SetupResponse received")
+            session_dict = print_log(session_dict, "S1AP: S1SetupResponse received")
             session_dict = S1SetupResponseProcessing(protocolIEs_list, session_dict)
-        
+ 
         elif procedure == "ResetAcknowledge":
-            session_dict = eMENU.print_log(session_dict, "S1AP: ResetAcknowledge received")
+            session_dict = print_log(session_dict, "S1AP: ResetAcknowledge received")
         else:
-            session_dict = eMENU.print_log(session_dict, "S1AP: " + procedure + " received") 
+            session_dict = print_log(session_dict, "S1AP: " + procedure + " received") 
     elif type == 'unsuccessfulOutcome':
-        
-        exit(1)
+        procedure, protocolIEs_list = pdu_dict['value'][0], pdu_dict['value'][1]['protocolIEs']
+        session_dict = print_log(session_dict, "S1AP: " + procedure + " received")
 
 
 
@@ -2531,7 +2662,7 @@ def encapsulate_gtp_u(ul_socket,ul_gtp):
     s_gtpu=ul_socket
     while True:
         try:
-            tap_packet = ul_gtp.recvfrom(5000)
+            tap_packet = ul_gtp.recvfrom(2048)
             if tap_packet[0][26:30] in gtp_dict:
                 teid=gtp_dict[tap_packet[0][26:30]][0]
                 s_gtpu.sendto(gtp_u_header(teid, len(tap_packet[0][14:])) + tap_packet[0][14:], (socket.inet_ntoa(gtp_dict[tap_packet[0][26:30]][1]), 2152))
@@ -2541,15 +2672,15 @@ def encapsulate_gtp_u(ul_socket,ul_gtp):
 def decapsulate_gtp_u(ul_socket,to_ue):
 
     s_gtpu = ul_socket
-    ethHeader=Ether(src=netifaces.ifaddresses('brlo')[netifaces.AF_LINK][0]['addr'],dst="ff:ff:ff:ff:ff:ff",type=0x0800)
-    
     while True: 
+        global down_gtp
 
-        gtp_packet, gtp_address = s_gtpu.recvfrom(5000)
+        gtp_packet, gtp_address = s_gtpu.recvfrom(2048)
         if gtp_packet[0:2] == b'\x30\xff':
-            #raw_packet=Ether(gtp_packet[8:])
-            pkt=ethHeader/gtp_packet[8:]
-            sendp(pkt,iface="brlo",verbose=0)
+                if gtp_packet[24:28] in down_gtp:
+                    ethHeader=Ether(src="ee:ee:ee:ee:ee:ee",dst=down_gtp[gtp_packet[24:28]][0],type=0x0800)
+                    pkt=ethHeader/gtp_packet[8:]
+                    sendp(pkt,iface=down_gtp[gtp_packet[24:28]][1],verbose=0)
                              
         elif gtp_packet[1:2] == b'\x01':
             gtp_echo_response = bytearray(gtp_packet) + b'\x0e\x00'
@@ -2567,12 +2698,11 @@ class UserDict(dict):
         self.setdefault('ENB-UE-S1AP-ID',1000)
         self.setdefault('APN',"internet")
         self.setdefault('ENB-CELLID',1000000)
-        self.setdefault('ENB-TAC1',int(73).to_bytes(2, byteorder='big'))
-        self.setdefault('ENB-TAC2',int(74).to_bytes(2, byteorder='big'))
+        self.setdefault('ENB-TAC1',int(63).to_bytes(2, byteorder='big'))
+        self.setdefault('ENB-TAC2',int(64).to_bytes(2, byteorder='big'))
         self.setdefault('LOCAL_KEYS',False)
         self.setdefault('SERIAL-INTERFACE','/dev/ttyUSB2')
         self.setdefault('LOCAL_MILENAGE',True)
-        self.setdefault('ENB-NAME','eNB')
         self.setdefault('ENB-PLMN',return_plmn_s1ap(self.get('PLMN')))
         self.setdefault('PDN-ADDRESS-IPV6',None)
         self.setdefault('ENB-TAC', self.get('ENB-TAC1'))
@@ -2591,7 +2721,6 @@ class UserDict(dict):
         self.setdefault('CPSR-TYPE',0)
         self.setdefault('S1-TYPE',"4G")
         self.setdefault('MOBILE-IDENTITY-TYPE',"IMSI") 
-        self.setdefault('SESSION-SESSION-TYPE',"NONE")
         self.setdefault('SESSION-TYPE',"4G")
         self.setdefault('SESSION-TYPE-TUN',1)
         self.setdefault('PDP-TYPE',1)
@@ -2618,25 +2747,24 @@ class UserDict(dict):
 ######################################################################################################################################
 ######################################################################################################################################
 if __name__ == "__main__":
+    logging.info(" ******************** Simulator Started ********************")
     os.system("ip netns show |awk {'print $1'}|xargs -I {} ip netns del {}")
-    ue_eth=[(f"veth{n}",f"neth{n}") for n in range(1000)]
-    upteid=1
-    bridge_name="brlo"  
-    user_dict = {}
-    gtp_dict = {}
-    enb_s1ap_id = 1
     parser = OptionParser()
     parser.add_option("-i", "--ip", dest="eNB_ip", help="eNB Local IP Address")
     parser.add_option("-m", "--mme", dest="mme_ip", help="MME IP Address")
     (options, args) = parser.parse_args()
     options.serial_interface="/dev/ttyUSB2"
-    sys_queue="/foo"
-    tmp_file="/tmp/foo"
-    bridge_up()
     server_address = (options.mme_ip, 36412)
 
     #socket options
-    client = socket.socket(socket.AF_INET,socket.SOCK_STREAM,socket.IPPROTO_SCTP)
+    if (type(ip_address(options.mme_ip))) is IPv6Address:
+        client = socket.socket(socket.AF_INET6,socket.SOCK_STREAM,socket.IPPROTO_SCTP)
+        s_gtpu = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        interface_name=[interface for interface in netifaces.interfaces() if 10 in netifaces.ifaddresses(interface) for name in netifaces.ifaddresses(interface)[10] if  name['addr']==str(options.eNB_ip)][0]
+    else:
+        client = socket.socket(socket.AF_INET,socket.SOCK_STREAM,socket.IPPROTO_SCTP)
+        s_gtpu = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        interface_name=[interface for interface in netifaces.interfaces() if 2 in netifaces.ifaddresses(interface) for name in netifaces.ifaddresses(interface)[2] if  name['addr']==str(options.eNB_ip)][0]
     client.settimeout(5)
     try:
        client.bind((options.eNB_ip, 0))
@@ -2647,27 +2775,16 @@ if __name__ == "__main__":
     sctp_default_send_param = bytearray(client.getsockopt(132,10,32))
     sctp_default_send_param[11]= 18
     client.setsockopt(132, 10, sctp_default_send_param)
-        
     #variables initialization 
     PDU = S1AP.S1AP_PDU_Descriptions.S1AP_PDU
     #################################################
     #################################################
     #################################################
     
-    # settting initial settings
-    #session_dict = session_dict_initialization(session_dict)
-    #session_dict['ENB-GTP-ADDRESS-INT'] = ip2int(options.eNB_ip)
-    #session_dict['ENB-GTP-ADDRESS'] = socket.inet_aton(options.eNB_ip)
     session_dict=UserDict()
-    s_gtpu = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s_gtpu.bind((options.eNB_ip, 2152))
-    pipe_in_gtpu_encapsulate, pipe_out_gtpu_encapsulate = os.pipe()
-    pipe_in_gtpu_decapsulate, pipe_out_gtpu_decapsulate = os.pipe()
-    session_dict['PIPE-OUT-GTPU-ENCAPSULATE'] = pipe_out_gtpu_encapsulate
-    session_dict['PIPE-OUT-GTPU-DECAPSULATE'] = pipe_out_gtpu_decapsulate
-    session_dict['GTP-U'] = b'\x02' # inactive
-    ul_gtp= socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-    ul_gtp.bind((bridge_name,0)) 
+    ul_gtp= socket.socket(socket.AF_PACKET, socket.SOCK_RAW,socket.ntohs(0x0003))
+    ul_gtp.bind((interface_name,0)) 
     worker1 = Thread(target = encapsulate_gtp_u, args = (s_gtpu,ul_gtp,))
     worker2 = Thread(target = decapsulate_gtp_u, args = (s_gtpu,ul_gtp,))
     worker1.setDaemon(True)
@@ -2678,18 +2795,14 @@ if __name__ == "__main__":
     try:
         client.connect(server_address)
     except Exception as e:
-        logging.info(f"Unable to connect to edge error {e} {server_address}")
-        os.system(f"echo FAILED>/var/log/sim/enb_status")
+        logging.error(f"Unable to connect to edge error {e} {server_address}")
         sys.exit()
 
-    q = posixmq.Queue(sys_queue)
+    q = sysvmq.Queue(1)
     while q.qsize()>0:
         q.get()
-    #socket_list = [sys.stdin ,client, dev_nbiot]
-    send_fd= open(tmp_file, 'w')
-    socket_list = [send_fd,client]
+    socket_list = [ul_gtp,client]
     imeisv=1000000000000000
-    os.system(f"echo CONNECTED>/var/log/sim/enb_status")
     while True:
         read_sockets, write_sockets, error_sockets = select.select(socket_list, [], [])
         for sock in read_sockets:
@@ -2697,34 +2810,34 @@ if __name__ == "__main__":
                 buffer = client.recv(4096)
                 PDU.from_aper(buffer)
                 (type, pdu_dict) = PDU()
-                for initial_dic in pdu_dict['value']:
-                    if 'protocolIEs' in initial_dic:
-                        for final_dic in  initial_dic['protocolIEs']:
-                            if 'id' in final_dic and final_dic['id'] == 8:
-                                for user_key, user_value in user_dict.items():
-                                    if final_dic['value'][1] == user_value['ENB-UE-S1AP-ID']:
-                                        session_dict=user_dict[user_key]
-                                        break
-                if  pdu_dict['value'][0] == 'Paging':                   
+                try:
+                   session_dict=user_dict[[user[0] for user in  list(user_dict.items()) if user[1]['ENB-UE-S1AP-ID']==int([ies['value'][1]  for d in pdu_dict['value'] if isinstance(d,dict)  for ies in d['protocolIEs'] if isinstance(ies,dict)  if ies['id']==8 if ies['value'][0]=='ENB-UE-S1AP-ID'][0])][0]]
+                except:
+                   pass 
+                if  pdu_dict['value'][0] == 'Paging':
                     for i in pdu_dict['value'][1]['protocolIEs']:
                         if i['id'] == 43:
                             if i['value'][1][0] == 's-TMSI':
                                 MME_CODE = i['value'][1][1]['mMEC']
                                 M_TMSI = i['value'][1][1]['m-TMSI']
                                 for user_key, user_value in user_dict.items():
+                                    tmsi=MME_CODE + M_TMSI
                                     if user_value['S-TMSI'] == MME_CODE + M_TMSI:
                                         session_dict=user_dict[user_key]
-
                 PDU, client, session_dict = ProcessS1AP(type, pdu_dict, client, session_dict)
-            elif sock == send_fd:
+            else:
                   if q.qsize()>0: 
                     queue_msg=q.get()
                     if queue_msg['procedure']=='s1-setup':
-                        session_dict=UserDict()
+                        if 'enb' in user_dict:
+                            del user_dict["enb"]
+                        user_dict["enb"]=UserDict()
+                        session_dict=user_dict["enb"]
+                        session_dict['IMSI']="enb"
                         if 'mcc' in queue_msg and 'mnc' in queue_msg:
                             session_dict['PLMN'] = f"{queue_msg['mcc']}{queue_msg['mnc']}"
                         else:
-                            session_dict['PLMN'] = '111111'
+                            session_dict['PLMN'] = '315010'
                         session_dict['ENB-PLMN']=return_plmn_s1ap(session_dict['PLMN']) 
                         if 'enb_id' in queue_msg:
                             session_dict['ENB-ID'] =int(queue_msg['enb_id'])
@@ -2733,15 +2846,18 @@ if __name__ == "__main__":
                         if 'tac1' in queue_msg:
                             session_dict['ENB-TAC1']=int(queue_msg['tac1']).to_bytes(2, byteorder='big')
                         else:
-                            session_dict['ENB-TAC1']=int(queue_msg[73]).to_bytes(2, byteorder='big')
-                        if 'tac2' in queue_msg:
-                            session_dict['ENB-TAC2']=int(queue_msg['tac2']).to_bytes(2, byteorder='big')
-                        else:
-                            session_dict['ENB-TAC2']=int(queue_msg[74]).to_bytes(2, byteorder='big')
-                    else:
+                            session_dict['ENB-TAC1']=int(63).to_bytes(2, byteorder='big')
+                        session_dict['ENB-NAME']= queue_msg['enb_name'] if 'enb_name' in queue_msg else 'h9-eNB'
+                    elif 'imsi' in queue_msg:
                         if queue_msg['imsi'] in user_dict:
-                                logging.info(f'imsi {queue_msg} found in object')
+                                logging.info(f'*************** imsi {queue_msg} found in object')
                                 session_dict = user_dict[queue_msg['imsi']]
+                                if queue_msg['procedure']== 'attach':
+                                        session_dict['e_RAB_id']=[]
+                                        session_dict['ul-gtp-teid']=[]
+                                        session_dict['dl-gtp-teid']=[]
+                                        if 'attach_type' in queue_msg and queue_msg['attach_type']=='imsi':
+                                            session_dict['re-attach']='imsi'
                                 try:
                                     del gtp_dict[hexlify(socket.inet_ntoa(session_dict['PDN-ADDRESS-IPV4']))]
                                     ue_eth_pair(session_dict['UE-NAMESPACE'])
@@ -2753,7 +2869,7 @@ if __name__ == "__main__":
                                 else:
                                     session_dict['AUTH-ERROR']=False
                         else:
-                            if set(('imsi', 'ki','opc','mcc','mnc')).issubset(queue_msg):
+                            if set(('imsi', 'ki','opc')).issubset(queue_msg) and 'enb' in user_dict:
                                 imeisv += 1
                                 user_dict[queue_msg['imsi']]=UserDict()
                                 session_dict=user_dict[queue_msg['imsi']]
@@ -2761,8 +2877,9 @@ if __name__ == "__main__":
                                 session_dict['IMSI']=queue_msg['imsi']
                                 session_dict['KI']=unhexlify(queue_msg['ki'])
                                 session_dict['OPC']=unhexlify(queue_msg['opc'])
-                                session_dict['PLMN']= f"{queue_msg['mcc']}{queue_msg['mnc']}"
+                                session_dict['PLMN']= user_dict['enb']['PLMN']
                                 session_dict['ENB-PLMN']=return_plmn_s1ap(session_dict['PLMN'])
+                                session_dict['ENB-CELLID']=user_dict['enb']['ENB-ID']
                                 session_dict['IMEISV']= str(imeisv)
                                 session_dict['STATE']=1
                                 session_dict['PDN-ADDRESS-IPV4']=None
@@ -2788,21 +2905,34 @@ if __name__ == "__main__":
                                 session_dict['NAS-KEY-EIA2']=return_key(session_dict['KASME'],2,'NAS-INT')
                                 session_dict['NAS-KEY-EIA3']=return_key(session_dict['KASME'],3,'NAS-INT')
                                 session_dict['ENB-GTP-ADDRESS-INT']=ip2int(options.eNB_ip)
-                                session_dict['PIPE-OUT-GTPU-ENCAPSULATE'] = pipe_out_gtpu_encapsulate
-                                session_dict['PIPE-OUT-GTPU-DECAPSULATE'] = pipe_out_gtpu_decapsulate
                                 session_dict['GTP-U'] = b'\x02'
                                 session_dict['UL-TEID'] = None
                                 session_dict['AUTH-ERROR']=False
                                 session_dict['GTP-KEY']=None
                                 session_dict['UE-NAMESPACE']=queue_msg['imsi']
+                                session_dict['SESSION-SESSION-TYPE']="ENABLE"
+                                session_dict['e_RAB_id']=[]
+                                session_dict['ul-gtp-teid']=[]
+                                session_dict['dl-gtp-teid']=[]
+                                if 'attach_type' in queue_msg and queue_msg['attach_type'] == 'guti':
+                                    session_dict['GUTI']=unhexlify('f613051000010100000000')
                             else:
+                                if 'enb' not in user_dict:
+                                    logging.error(f"*************** S1-Setup is not done")
+                                    break
+                                logging.info(f"*************** {queue_msg['procedure']} not matching")
                                 break
                     msg=queue_msg['procedure']
-                    if 'IMSI' in session_dict:
-                        logging.info(f"{msg} {session_dict['IMSI']} no if active user in tool {len(user_dict)} no of gtp tunnel {len(gtp_dict)}")
+                    logging.info(gtp_dict)
+                    if msg=='s1-setup':
+                        PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg,user_dict)
+                    elif 'IMSI' in session_dict :
+                        if msg == "active-users":
+                            logging.info(f'*************** Active IMSIs :- {[user for user in list(user_dict.keys()) if user != "enb"]}')
+                        else:
+                            PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg,user_dict)
                     else:
-                        logging.info(f"{msg} no if active user in tool {len(user_dict)} no of gtp tunnel {len(gtp_dict)}")
-                    PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg)
+                        logging.info(f"*************** {msg} no if active user in tool {len(user_dict)} no of gtp tunnel {len(gtp_dict)}")
     client.close()
 
 

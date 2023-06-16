@@ -12,10 +12,6 @@ MENU_WIDTH = 45
 LOG_WIDTH = 110
 LOG_SIZE = 100
 
-os.system("mkdir -p /var/log/sim/")
-logging.basicConfig(filename="/var/log/sim/tool.log",filemode='w',format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',datefmt='%Y-%m-%d %H:%M:%S',level=logging.DEBUG)
-logger = logging.getLogger('edge_log')
-logging.info(" ********************* tool started ***************")
 # =======================
 #     MENUS FUNCTIONS
 # =======================
@@ -115,7 +111,7 @@ def print_menu(log):
         
 
 
-def ProcessMenu(PDU, client, session_dict, msg):
+def ProcessMenu(PDU, client, session_dict, msg,user_dict):
     global enb_s1ap_id
     if msg == "Q\n" or msg == "q\n": 
         os.system('clear')
@@ -315,11 +311,24 @@ def ProcessMenu(PDU, client, session_dict, msg):
         bytes_sent = client.send(message)
   
     elif msg == "s1-reset":
-    
-        PDU.set_val(Reset(session_dict))
+        PDU.set_val(Reset(session_dict,user_dict))
         message = PDU.to_aper()    
         client = set_stream(client, 0)
         bytes_sent = client.send(message)         
+
+    elif msg == "enbupdate":
+        PDU.set_val(ENBConfigurationUpdate(session_dict,user_dict))
+        message = PDU.to_aper()
+        client = set_stream(client, 0)
+        bytes_sent = client.send(message)
+
+    elif msg == "overload":
+
+        PDU.set_val(Overload(session_dict))
+        message = PDU.to_aper()
+        client = set_stream(client, 0)
+        bytes_sent = client.send(message)
+
 
     elif msg == "19":
         if session_dict['STATE'] >0:   
@@ -351,27 +360,55 @@ def ProcessMenu(PDU, client, session_dict, msg):
 
     elif msg == "attach":
         if session_dict['STATE'] >0:
-            session_dict['NAS'] = nas_attach_request(
-                (session_dict['SESSION-TYPE'],session_dict['SESSION-SESSION-TYPE']),
-                session_dict['ATTACH-PDN'],
-                session_dict['MOBILE-IDENTITY'],
-                session_dict['PDP-TYPE'],
-                session_dict['ATTACH-TYPE'],
-                session_dict['TMSI'],
-                session_dict['LAI'],
-                session_dict['SMS-UPDATE-TYPE'],
-                session_dict['PCSCF-RESTORATION']
-            )
-            session_dict['SQN'] = 0
-            session_dict['MME-UE-S1AP-ID-OLD'] = session_dict['MME-UE-S1AP-ID']
-            session_dict['ENB-UE-S1AP-ID-OLD'] = session_dict['ENB-UE-S1AP-ID']
-            session_dict['ENB-UE-S1AP-ID'] = dynamic_variable()['enb_s1ap_id']
-            PDU.set_val(InitialUEMessage(session_dict))
+            if 'GUTI' in session_dict and 're-attach' not in session_dict:
+                session_dict['NAS'] = nas_attach_request(
+                    (session_dict['SESSION-TYPE'],session_dict['SESSION-SESSION-TYPE']),
+                    session_dict['ATTACH-PDN'],
+                    session_dict['MOBILE-IDENTITY'],
+                    session_dict['PDP-TYPE'],
+                    session_dict['ATTACH-TYPE'],
+                    session_dict['TMSI'],
+                    session_dict['LAI'],
+                    session_dict['SMS-UPDATE-TYPE'],
+                    session_dict['PCSCF-RESTORATION'],
+                    session_dict['GUTI']
+                )
+                session_dict['SQN'] = 0
+                session_dict['MME-UE-S1AP-ID-OLD'] = session_dict['MME-UE-S1AP-ID']
+                session_dict['ENB-UE-S1AP-ID-OLD'] = session_dict['ENB-UE-S1AP-ID']
+                session_dict['ENB-UE-S1AP-ID'] = dynamic_variable()['enb_s1ap_id']
+                PDU.set_val(InitialUEMessage(session_dict,'attach'))
+
+            else:
+                session_dict['NAS'] = nas_attach_request(
+                    (session_dict['SESSION-TYPE'],session_dict['SESSION-SESSION-TYPE']),
+                    session_dict['ATTACH-PDN'],
+                    session_dict['MOBILE-IDENTITY'],
+                    session_dict['PDP-TYPE'],
+                    session_dict['ATTACH-TYPE'],
+                    session_dict['TMSI'],
+                    session_dict['LAI'],
+                    session_dict['SMS-UPDATE-TYPE'],
+                    session_dict['PCSCF-RESTORATION']
+                )
+                session_dict['SQN'] = 0
+                session_dict['MME-UE-S1AP-ID-OLD'] = session_dict['MME-UE-S1AP-ID']
+                session_dict['ENB-UE-S1AP-ID-OLD'] = session_dict['ENB-UE-S1AP-ID']
+                session_dict['ENB-UE-S1AP-ID'] = dynamic_variable()['enb_s1ap_id']
+                PDU.set_val(InitialUEMessage(session_dict))
             message = PDU.to_aper()
             client = set_stream(client, 1)
-            bytes_sent = client.send(message)    
+            bytes_sent = client.send(message)   
+            if 're-attach' in session_dict:
+                del session_dict['re-attach']
 
-
+    elif msg == "x2":
+        if session_dict['STATE'] >1:
+            session_dict['ENB-UE-S1AP-ID'] = dynamic_variable()['enb_s1ap_id']
+            PDU.set_val(PathSwitchRequest(session_dict,user_dict))
+            message = PDU.to_aper()
+            client = set_stream(client, 0)
+            bytes_sent = client.send(message)
 
     elif msg == "detach":
         #start list
@@ -408,6 +445,15 @@ def ProcessMenu(PDU, client, session_dict, msg):
             client = set_stream(client, 1)
             bytes_sent = client.send(message)
 
+
+    elif msg == "tau-combine":
+        if session_dict['STATE'] >1:
+            session_dict['ENB-UE-S1AP-ID'] = dynamic_variable()['enb_s1ap_id']
+            session_dict = ProcessUplinkNAS('tracking area update request combine', session_dict)
+            PDU.set_val(InitialUEMessage(session_dict))
+            message = PDU.to_aper()
+            client = set_stream(client, 1)
+            bytes_sent = client.send(message)
         
 
     elif msg == "service-request":
