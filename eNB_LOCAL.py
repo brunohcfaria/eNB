@@ -2698,8 +2698,8 @@ class UserDict(dict):
         self.setdefault('ENB-UE-S1AP-ID',1000)
         self.setdefault('APN',"internet")
         self.setdefault('ENB-CELLID',1000000)
-        self.setdefault('ENB-TAC1',int(63).to_bytes(2, byteorder='big'))
-        self.setdefault('ENB-TAC2',int(64).to_bytes(2, byteorder='big'))
+        self.setdefault('ENB-TAC1',int(1).to_bytes(2, byteorder='big'))
+        self.setdefault('ENB-TAC2',int(1).to_bytes(2, byteorder='big'))
         self.setdefault('LOCAL_KEYS',False)
         self.setdefault('SERIAL-INTERFACE','/dev/ttyUSB2')
         self.setdefault('LOCAL_MILENAGE',True)
@@ -2804,135 +2804,138 @@ if __name__ == "__main__":
     socket_list = [ul_gtp,client]
     imeisv=1000000000000000
     while True:
-        read_sockets, write_sockets, error_sockets = select.select(socket_list, [], [])
-        for sock in read_sockets:
-            if sock == client:
-                buffer = client.recv(4096)
-                PDU.from_aper(buffer)
-                (type, pdu_dict) = PDU()
-                try:
-                   session_dict=user_dict[[user[0] for user in  list(user_dict.items()) if user[1]['ENB-UE-S1AP-ID']==int([ies['value'][1]  for d in pdu_dict['value'] if isinstance(d,dict)  for ies in d['protocolIEs'] if isinstance(ies,dict)  if ies['id']==8 if ies['value'][0]=='ENB-UE-S1AP-ID'][0])][0]]
-                except:
-                   pass 
-                if  pdu_dict['value'][0] == 'Paging':
-                    for i in pdu_dict['value'][1]['protocolIEs']:
-                        if i['id'] == 43:
-                            if i['value'][1][0] == 's-TMSI':
-                                MME_CODE = i['value'][1][1]['mMEC']
-                                M_TMSI = i['value'][1][1]['m-TMSI']
-                                for user_key, user_value in user_dict.items():
-                                    tmsi=MME_CODE + M_TMSI
-                                    if user_value['S-TMSI'] == MME_CODE + M_TMSI:
-                                        session_dict=user_dict[user_key]
-                PDU, client, session_dict = ProcessS1AP(type, pdu_dict, client, session_dict)
-            else:
-                  if q.qsize()>0: 
-                    queue_msg=q.get()
-                    if queue_msg['procedure']=='s1-setup':
-                        if 'enb' in user_dict:
-                            del user_dict["enb"]
-                        user_dict["enb"]=UserDict()
-                        session_dict=user_dict["enb"]
-                        session_dict['IMSI']="enb"
-                        if 'mcc' in queue_msg and 'mnc' in queue_msg:
-                            session_dict['PLMN'] = f"{queue_msg['mcc']}{queue_msg['mnc']}"
-                        else:
-                            session_dict['PLMN'] = '315010'
-                        session_dict['ENB-PLMN']=return_plmn_s1ap(session_dict['PLMN']) 
-                        if 'enb_id' in queue_msg:
-                            session_dict['ENB-ID'] =int(queue_msg['enb_id'])
-                        else:
-                            session_dict['ENB-ID'] =100000
-                        if 'tac1' in queue_msg:
-                            session_dict['ENB-TAC1']=int(queue_msg['tac1']).to_bytes(2, byteorder='big')
-                        else:
-                            session_dict['ENB-TAC1']=int(63).to_bytes(2, byteorder='big')
-                        session_dict['ENB-NAME']= queue_msg['enb_name'] if 'enb_name' in queue_msg else 'h9-eNB'
-                    elif 'imsi' in queue_msg:
-                        if queue_msg['imsi'] in user_dict:
-                                logging.info(f'*************** imsi {queue_msg} found in object')
-                                session_dict = user_dict[queue_msg['imsi']]
-                                if queue_msg['procedure']== 'attach':
-                                        session_dict['e_RAB_id']=[]
-                                        session_dict['ul-gtp-teid']=[]
-                                        session_dict['dl-gtp-teid']=[]
-                                        if 'attach_type' in queue_msg and queue_msg['attach_type']=='imsi':
-                                            session_dict['re-attach']='imsi'
-                                try:
-                                    del gtp_dict[hexlify(socket.inet_ntoa(session_dict['PDN-ADDRESS-IPV4']))]
-                                    ue_eth_pair(session_dict['UE-NAMESPACE'])
-                                except:
-                                    pass
-                                if 'auth-error' in queue_msg:
-                                    if queue_msg['auth-error']:
-                                        session_dict['AUTH-ERROR']=True
-                                else:
-                                    session_dict['AUTH-ERROR']=False
-                        else:
-                            if set(('imsi', 'ki','opc')).issubset(queue_msg) and 'enb' in user_dict:
-                                imeisv += 1
-                                user_dict[queue_msg['imsi']]=UserDict()
-                                session_dict=user_dict[queue_msg['imsi']]
-                                session_dict['MME-UE-S1AP-ID']=None
-                                session_dict['IMSI']=queue_msg['imsi']
-                                session_dict['KI']=unhexlify(queue_msg['ki'])
-                                session_dict['OPC']=unhexlify(queue_msg['opc'])
-                                session_dict['PLMN']= user_dict['enb']['PLMN']
-                                session_dict['ENB-PLMN']=return_plmn_s1ap(session_dict['PLMN'])
-                                session_dict['ENB-CELLID']=user_dict['enb']['ENB-ID']
-                                session_dict['IMEISV']= str(imeisv)
-                                session_dict['STATE']=1
-                                session_dict['PDN-ADDRESS-IPV4']=None
-                                session_dict['PDN-ADDRESS']= []
-                                session_dict['ENB-GTP-ADDRESS-INT']=''
-                                session_dict['RAB-ID']=[]
-                                session_dict['SGW-GTP-ADDRESS']=[]
-                                session_dict['SGW-TEID']=[]
-                                session_dict['EPS-BEARER-IDENTITY']=[]
-                                session_dict['EPS-BEARER-TYPE']=[]  # default 0, dedicated 1
-                                session_dict['EPS-BEARER-STATE']=[] # active 1, inactive 0
-                                session_dict['EPS-BEARER-APN']=[]
-                                session_dict['ENCODED-IMSI']=eNAS.encode_imsi(session_dict['IMSI'])
-                                session_dict['MOBILE-IDENTITY']=session_dict['ENCODED-IMSI']
-                                session_dict['ENCODED-IMEI']=eNAS.encode_imei(session_dict['IMEISV'])
-                                session_dict['ENCODED-GUTI']=eNAS.encode_guti(int(session_dict['PLMN']),32769,1,12345678)
-                                session_dict['KASME'] = b'kasme   kasme   kasme   kasme   '
-                                session_dict['XRES'] = b'xresxres'
-                                session_dict['NAS-KEY-EEA1']=return_key(session_dict['KASME'],1,'NAS-ENC')
-                                session_dict['NAS-KEY-EEA2']=return_key(session_dict['KASME'],2,'NAS-ENC')
-                                session_dict['NAS-KEY-EEA3']=return_key(session_dict['KASME'],3,'NAS-ENC')
-                                session_dict['NAS-KEY-EIA1']=return_key(session_dict['KASME'],1,'NAS-INT')
-                                session_dict['NAS-KEY-EIA2']=return_key(session_dict['KASME'],2,'NAS-INT')
-                                session_dict['NAS-KEY-EIA3']=return_key(session_dict['KASME'],3,'NAS-INT')
-                                session_dict['ENB-GTP-ADDRESS-INT']=ip2int(options.eNB_ip)
-                                session_dict['GTP-U'] = b'\x02'
-                                session_dict['UL-TEID'] = None
-                                session_dict['AUTH-ERROR']=False
-                                session_dict['GTP-KEY']=None
-                                session_dict['UE-NAMESPACE']=queue_msg['imsi']
-                                session_dict['SESSION-SESSION-TYPE']="ENABLE"
+        read_sockets, write_sockets, error_sockets = select.select(socket_list, [], [], 0)
+        if read_sockets:
+            for sock in read_sockets:
+                if sock == client:
+                    buffer = client.recv(4096)
+                    PDU.from_aper(buffer)
+                    (type, pdu_dict) = PDU()
+                    try:
+                        session_dict=user_dict[[user[0] for user in  list(user_dict.items()) if user[1]['ENB-UE-S1AP-ID']==int([ies['value'][1]  for d in pdu_dict['value'] if isinstance(d,dict)  for ies in d['protocolIEs'] if isinstance(ies,dict)  if ies['id']==8 if ies['value'][0]=='ENB-UE-S1AP-ID'][0])][0]]
+                    except:
+                        pass 
+                    if  pdu_dict['value'][0] == 'Paging':
+                        for i in pdu_dict['value'][1]['protocolIEs']:
+                            if i['id'] == 43:
+                                if i['value'][1][0] == 's-TMSI':
+                                    MME_CODE = i['value'][1][1]['mMEC']
+                                    M_TMSI = i['value'][1][1]['m-TMSI']
+                                    for user_key, user_value in user_dict.items():
+                                        tmsi=MME_CODE + M_TMSI
+                                        if user_value['S-TMSI'] == MME_CODE + M_TMSI:
+                                            session_dict=user_dict[user_key]
+                    PDU, client, session_dict = ProcessS1AP(type, pdu_dict, client, session_dict)
+        
+        if q.qsize()>0: 
+            queue_msg=q.get()
+            if queue_msg['procedure']=='s1-setup':
+                if 'enb' in user_dict:
+                    del user_dict["enb"]
+                user_dict["enb"]=UserDict()
+                session_dict=user_dict["enb"]
+                session_dict['IMSI']="enb"
+                if 'mcc' in queue_msg and 'mnc' in queue_msg:
+                    session_dict['PLMN'] = f"{queue_msg['mcc']}{queue_msg['mnc']}"
+                else:
+                    session_dict['PLMN'] = '315010'
+                session_dict['ENB-PLMN']=return_plmn_s1ap(session_dict['PLMN']) 
+                if 'enb_id' in queue_msg:
+                    session_dict['ENB-ID'] =int(queue_msg['enb_id'])
+                else:
+                    session_dict['ENB-ID'] =100000
+                if 'tac1' in queue_msg:
+                    session_dict['ENB-TAC1']=int(queue_msg['tac1']).to_bytes(2, byteorder='big')
+                else:
+                    session_dict['ENB-TAC1']=int(63).to_bytes(2, byteorder='big')
+                session_dict['ENB-NAME']= queue_msg['enb_name'] if 'enb_name' in queue_msg else 'h9-eNB'
+            elif 'imsi' in queue_msg:
+                if queue_msg['imsi'] in user_dict:
+                        logging.info(f'*************** imsi {queue_msg} found in object')
+                        session_dict = user_dict[queue_msg['imsi']]
+                        if queue_msg['procedure']== 'attach':
                                 session_dict['e_RAB_id']=[]
                                 session_dict['ul-gtp-teid']=[]
                                 session_dict['dl-gtp-teid']=[]
-                                if 'attach_type' in queue_msg and queue_msg['attach_type'] == 'guti':
-                                    session_dict['GUTI']=unhexlify('f613051000010100000000')
-                            else:
-                                if 'enb' not in user_dict:
-                                    logging.error(f"*************** S1-Setup is not done")
-                                    break
-                                logging.info(f"*************** {queue_msg['procedure']} not matching")
-                                break
-                    msg=queue_msg['procedure']
-                    logging.info(gtp_dict)
-                    if msg=='s1-setup':
-                        PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg,user_dict)
-                    elif 'IMSI' in session_dict :
-                        if msg == "active-users":
-                            logging.info(f'*************** Active IMSIs :- {[user for user in list(user_dict.keys()) if user != "enb"]}')
+                                if 'attach_type' in queue_msg and queue_msg['attach_type']=='imsi':
+                                    session_dict['re-attach']='imsi'
+                        try:
+                            del gtp_dict[hexlify(socket.inet_ntoa(session_dict['PDN-ADDRESS-IPV4']))]
+                            ue_eth_pair(session_dict['UE-NAMESPACE'])
+                        except:
+                            pass
+                        if 'auth-error' in queue_msg:
+                            if queue_msg['auth-error']:
+                                session_dict['AUTH-ERROR']=True
                         else:
-                            PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg,user_dict)
+                            session_dict['AUTH-ERROR']=False
+                else:
+                    if set(('imsi', 'ki','opc')).issubset(queue_msg) and 'enb' in user_dict:
+                        imeisv += 1
+                        user_dict[queue_msg['imsi']]=UserDict()
+                        session_dict=user_dict[queue_msg['imsi']]
+                        session_dict['MME-UE-S1AP-ID']=None
+                        session_dict['IMSI']=queue_msg['imsi']
+                        session_dict['KI']=unhexlify(queue_msg['ki'])
+                        session_dict['OPC']=unhexlify(queue_msg['opc'])
+                        session_dict['PLMN']= user_dict['enb']['PLMN']
+                        session_dict['ENB-PLMN']=return_plmn_s1ap(session_dict['PLMN'])
+                        session_dict['ENB-CELLID']=user_dict['enb']['ENB-ID']
+                        session_dict['IMEISV']= str(imeisv)
+                        session_dict['STATE']=1
+                        session_dict['PDN-ADDRESS-IPV4']=None
+                        session_dict['PDN-ADDRESS']= []
+                        session_dict['ENB-GTP-ADDRESS-INT']=''
+                        session_dict['RAB-ID']=[]
+                        session_dict['SGW-GTP-ADDRESS']=[]
+                        session_dict['SGW-TEID']=[]
+                        session_dict['EPS-BEARER-IDENTITY']=[]
+                        session_dict['EPS-BEARER-TYPE']=[]  # default 0, dedicated 1
+                        session_dict['EPS-BEARER-STATE']=[] # active 1, inactive 0
+                        session_dict['EPS-BEARER-APN']=[]
+                        session_dict['ENCODED-IMSI']=eNAS.encode_imsi(session_dict['IMSI'])
+                        session_dict['MOBILE-IDENTITY']=session_dict['ENCODED-IMSI']
+                        session_dict['ENCODED-IMEI']=eNAS.encode_imei(session_dict['IMEISV'])
+                        session_dict['ENCODED-GUTI']=eNAS.encode_guti(int(session_dict['PLMN']),32769,1,12345678)
+                        session_dict['KASME'] = b'kasme   kasme   kasme   kasme   '
+                        session_dict['XRES'] = b'xresxres'
+                        session_dict['NAS-KEY-EEA1']=return_key(session_dict['KASME'],1,'NAS-ENC')
+                        session_dict['NAS-KEY-EEA2']=return_key(session_dict['KASME'],2,'NAS-ENC')
+                        session_dict['NAS-KEY-EEA3']=return_key(session_dict['KASME'],3,'NAS-ENC')
+                        session_dict['NAS-KEY-EIA1']=return_key(session_dict['KASME'],1,'NAS-INT')
+                        session_dict['NAS-KEY-EIA2']=return_key(session_dict['KASME'],2,'NAS-INT')
+                        session_dict['NAS-KEY-EIA3']=return_key(session_dict['KASME'],3,'NAS-INT')
+                        session_dict['ENB-GTP-ADDRESS-INT']=ip2int(options.eNB_ip)
+                        session_dict['GTP-U'] = b'\x02'
+                        session_dict['UL-TEID'] = None
+                        session_dict['AUTH-ERROR']=False
+                        session_dict['GTP-KEY']=None
+                        session_dict['UE-NAMESPACE']=queue_msg['imsi']
+                        session_dict['SESSION-SESSION-TYPE']="ENABLE"
+                        session_dict['e_RAB_id']=[]
+                        session_dict['ul-gtp-teid']=[]
+                        session_dict['dl-gtp-teid']=[]
+                        if 'attach_type' in queue_msg and queue_msg['attach_type'] == 'guti':
+                            session_dict['GUTI']=unhexlify('f613051000010100000000')
                     else:
-                        logging.info(f"*************** {msg} no if active user in tool {len(user_dict)} no of gtp tunnel {len(gtp_dict)}")
+                        if 'enb' not in user_dict:
+                            logging.error(f"*************** S1-Setup is not done")
+                            break
+                        logging.info(f"*************** {queue_msg['procedure']} not matching")
+                        break
+            msg=queue_msg['procedure']
+            logging.info(gtp_dict)
+            if msg=='s1-setup':
+                PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg,user_dict)
+            elif 'IMSI' in session_dict :
+                if msg == "active-users":
+                    logging.info(f'*************** Active IMSIs :- {[user for user in list(user_dict.keys()) if user != "enb"]}')
+                else:
+                    logging.info(f"Sending message \"{msg}\" to ProcessMenu")
+                    PDU, client, session_dict = eMENU.ProcessMenu(PDU, client, session_dict, msg,user_dict)
+            else:
+                logging.info(f"*************** {msg} no if active user in tool {len(user_dict)} no of gtp tunnel {len(gtp_dict)}")
+
     client.close()
 
 

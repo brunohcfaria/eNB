@@ -2,7 +2,10 @@
 import sys, os
 import datetime
 from eNB_LOCAL import * 
-import logging 
+import logging as log
+
+logging = log.getLogger(__name__)
+
 # Main definition - constants
 menu_actions  = {}  
 
@@ -113,9 +116,12 @@ def print_menu(log):
 
 def ProcessMenu(PDU, client, session_dict, msg,user_dict):
     global enb_s1ap_id
+
+    logging.info(f"ProcessMenu: message received {msg}")
+
     if msg == "Q\n" or msg == "q\n": 
         os.system('clear')
-        exit(1)    
+        exit(1)
 
     elif msg == "0":
         session_dict = print_log(session_dict, "IMSI: " + str(session_dict['IMSI']) + " / IMEI: " + str(session_dict['IMEISV']))
@@ -359,6 +365,8 @@ def ProcessMenu(PDU, client, session_dict, msg,user_dict):
 
 
     elif msg == "attach":
+        session_dict = print_log(session_dict, "attach")
+        session_dict = print_log(session_dict, f"state = {session_dict['STATE']}")
         if session_dict['STATE'] >0:
             if 'GUTI' in session_dict and 're-attach' not in session_dict:
                 session_dict['NAS'] = nas_attach_request(
@@ -457,7 +465,10 @@ def ProcessMenu(PDU, client, session_dict, msg,user_dict):
         
 
     elif msg == "service-request":
+        session_dict = print_log(session_dict, "service-request")
+        session_dict = print_log(session_dict, f"state = {session_dict['STATE']}")
         if session_dict['STATE'] >1:
+            
             session_dict['ENB-UE-S1AP-ID'] = dynamic_variable()['enb_s1ap_id']
             session_dict = ProcessUplinkNAS('service request', session_dict)
             PDU.set_val(InitialUEMessage(session_dict))
