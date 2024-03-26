@@ -272,7 +272,7 @@ def session_dict_initialization(session_dict):
     
     session_dict['ENCODED-IMSI'] = eNAS.encode_imsi(session_dict['IMSI'])
     session_dict['ENCODED-IMEI'] = eNAS.encode_imei(IMEISV)
-    session_dict['ENCODED-GUTI'] = eNAS.encode_guti(int(session_dict['PLMN']),32769,1,12345678)
+    session_dict['ENCODED-GUTI'] = eNAS.encode_guti(session_dict['PLMN'],32769,1,12345678)
     
     session_dict['S-TMSI'] = None
     
@@ -2896,7 +2896,7 @@ if __name__ == "__main__":
                         session_dict['ENCODED-IMSI']=eNAS.encode_imsi(session_dict['IMSI'])
                         session_dict['MOBILE-IDENTITY']=session_dict['ENCODED-IMSI']
                         session_dict['ENCODED-IMEI']=eNAS.encode_imei(session_dict['IMEISV'])
-                        session_dict['ENCODED-GUTI']=eNAS.encode_guti(int(session_dict['PLMN']),32769,1,12345678)
+                        session_dict['ENCODED-GUTI']=eNAS.encode_guti(session_dict['PLMN'],32769,1,12345678)
                         session_dict['KASME'] = b'kasme   kasme   kasme   kasme   '
                         session_dict['XRES'] = b'xresxres'
                         session_dict['NAS-KEY-EEA1']=return_key(session_dict['KASME'],1,'NAS-ENC')
