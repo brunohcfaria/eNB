@@ -114,7 +114,7 @@ def print_menu(log):
         
 
 
-def ProcessMenu(PDU, client, session_dict, msg,user_dict):
+def ProcessMenu(PDU, client, session_dict, msg, user_dict):
     global enb_s1ap_id
 
     logging.info(f"ProcessMenu: message received {msg}")

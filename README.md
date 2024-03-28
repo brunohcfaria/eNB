@@ -35,22 +35,22 @@ When you call the script these are the options available:
 #IPV6 IP Command
 ./simulator.py -P start-simulator --enbip 2001:db8:0:f101::1 --mmeip 2001:db8:0:f101::2    
 #IPv4 IP Command
-./simulator.py -P start-simulator --enbip 192.168.197.180 --mmeip 192.168.197.201
-./simulator.py -P s1-setup --mcc 333 --mnc 333 --enbid 100000 --tac1 63 
+./simulator.py -P start-simulator --enbip 192.168.60.141 --mmeip 192.168.60.144
+./simulator.py -P s1-setup s1-setup --mcc 001 --mnc 01 --enbid 100000 --tac1 1 
  (optional parameters for s1-setup "--enbname value")
  
 ./simulator.py -P s1-reset
-./simulator.py -P attach --imsi 333010000000001 --key e8767ccf27d3fae385b16bf073c912a2 --opc 982559004308ee438a99b5baf6a59c45
+./simulator.py -P attach --imsi 001010000000001 --key 000102030405060708090A0B0C0D0E0F --opc 24c05f7c2f2b368de10f252f25f6cfc2
  (optional parameters for attach  "--attachtype imsi or guti ")
  
-./simulator.py -P idle --imsi 333010000000001
-./simulator.py -P tau --imsi 333010000000001
-./simulator.py -P tau-p --imsi 333010000000001
-./simulator.py -P tau-combine --imsi 333010000000001
-./simulator.py -P service-request --imsi 333010000000001
-./simulator.py -P x2 --imsi 333010000000001
+./simulator.py -P idle --imsi 001010000000001
+./simulator.py -P tau --imsi 001010000000001
+./simulator.py -P tau-p --imsi 001010000000001
+./simulator.py -P tau-combine --imsi 001010000000001
+./simulator.py -P service-request --imsi 001010000000001
+./simulator.py -P x2 --imsi 001010000000001
 ./simulator.py -P active-users
-./simulator.py -P detach --imsi 333010000000001
+./simulator.py -P detach --imsi 001010000000001
 ./simulator.py -P stop-simulator
   
   ```
@@ -64,6 +64,12 @@ ip netns exec 333010000000001 ping 8.8.8.8
 log path :- journalctl -fu tool
 
 shortcut :- toollog
+
+
+## Docker container
+
+`docker build -f Dockerfile -t enbsim:latest .`
+`docker run --name enbsim -v .:/usr/src/eNB --cap-add NET_ADMIN --network=host enbsim  --enb_ip 192.168.130.10 --mme_ip 192.168.130.2`
 
 ## Functionality
 
