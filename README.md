@@ -1,5 +1,6 @@
 # eNB s1 Emulator
 # Data throughput performance wont work and iperf udp 1400 mtu  only work 
+
 ## Installation
 
 On a Ubuntu systems you can install with:
@@ -12,10 +13,6 @@ echo "alias toollog='journalctl -fu tool'">>/root/.bashrc
 source /root/.bashrc
 ```
 
-Now we can clone the repository with:
-
-
-
 Finally we will need to install all of the Python packages needed to run the tool.
 
 We can install all these packages using pip3 with:
@@ -23,6 +20,29 @@ We can install all these packages using pip3 with:
 ```
 sudo pip3 install -r requirements.txt
 ```
+
+## Using the container version
+
+Build the image:
+
+`docker build -f Dockerfile -t enbsim:latest .`
+
+Running the simulator:
+
+`docker run --name enbsim -v .:/usr/src/eNB --cap-add NET_ADMIN --network=host enbsim  --enb_ip 192.168.130.10 --mme_ip 192.168.130.2`
+
+To send commands to the simulator process in the container you can use the `docker exec` command
+
+Here's a couple of examples:
+
+- S1AP Setup
+
+`docker exec -it enbsim python3 enbsim_cli.py -P s1-setup --mcc 001 --mnc 01 --enbid 100000 --tac1 1`
+
+- Attach
+
+`docker exec -it enbsim python3 enbsim_cli.py -P attach --imsi 001010000000001 --key 000102030405060708090A0B0C0D0E0F --opc 24c05f7c2f2b368de10f252f25f6cfc2`
+
 
 ## Usage
 
