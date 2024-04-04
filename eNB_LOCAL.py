@@ -3184,6 +3184,7 @@ if __name__ == "__main__":
                         session_dict['KI'] = unhexlify(queue_msg['ki'])
                         session_dict['OPC'] = unhexlify(queue_msg['opc'])
                         session_dict['PLMN'] = user_dict['enb']['PLMN']
+                        session_dict['ENB-TAC'] = user_dict['enb']['ENB-TAC1']
                         session_dict['ENB-PLMN'] = return_plmn_s1ap(
                             session_dict['PLMN'])
                         session_dict['ENB-CELLID'] = user_dict['enb']['ENB-ID']
