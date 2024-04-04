@@ -5,7 +5,7 @@
 run_load_test() 
 {
     # for i in $(seq $MAX_REQ)
-    for i in $(seq -f "%04g" $MAX_REQ)
+    for i in $(seq -f "%04g" $FROM_REQ $TO_REQ)
     do
         IMSI=00101000000$i
         echo "Sending attach request to imsi $IMSI"
@@ -13,13 +13,16 @@ run_load_test()
     done
 }
 
-while getopts ":n:" option; do
+while getopts ":n:s:" option; do
     case $option in
         n)
-            MAX_REQ=$OPTARG
-            run_load_test;;
+            FROM_REQ=$OPTARG;;
+        s)
+            TO_REQ=$OPTARG
+            ;;
         \?) # Invalid option
             echo "Error: Invalid option"
             exit;;
    esac
+run_load_test
 done
