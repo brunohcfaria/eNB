@@ -3052,7 +3052,7 @@ if __name__ == "__main__":
         client = socket.socket(
             socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_SCTP)
         s_gtpu = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        interface_name = [interface for interface in netifaces.interfaces() if 2 in netifaces.ifaddresses(
+        interface_name = [interface for interface in netifaces.interfaces() if netifaces.AF_INET in netifaces.ifaddresses(
             interface) for name in netifaces.ifaddresses(interface)[2] if name['addr'] == str(options.enb_ip)][0]
 
     client.settimeout(5)
